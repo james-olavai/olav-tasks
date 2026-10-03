@@ -7,7 +7,7 @@
 - 名称为 Olav Tasks；目录为 `olav-tasks`。npm 包候选名与 CLI 候选入口均为 `olav-tasks`，发布前确认名称可用性。
 - 第一版：Kanban、文件管理、规划/编写/整理 Markdown skills，以及 docs-kb 的 Markdown 检索与长文定位能力，通过一个 npm 包分发。2026-09-30 补入轻量 docs-kb 与规划 skill，范围为 Node 本地检索及显式目录 skill 安装；交付状态见对应任务。
 - 第一版验收包含本机真实项目管理：先管理本项目，再由用户选择现有项目目录接入。
-- 2026-10-03 用户授权最小版开发聊天：任务详情内嵌 Agent 面板，经 Claude Agent SDK 为每个任务起一个会话（`src/agent.ts`），仅 loopback，权限请求由网页逐条批准；每个任务一个 git worktree 与 `agent/<ID>` 分支，运行记录存于项目外的 `<父目录>/.olav-tasks-state/<项目名>/`；面板可看分支 diff，`done` 仍只由人点“验收通过”设置，验收后可提交到分支并清理 worktree，分支合并仍是手动；每次运行记录 token 与估算费用，可选预算/回合上限；Claude 运行预置 explorer/implementer/reviewer 三个子 agent 角色（各自固定档位与工具白名单），日志按角色和模型标注；任务可带可选 `check` 命令，服务端在每回合后于 worktree 内独立运行并显示红绿（仅作验收证据，不改状态）。随包分发 `loop-dev` skill（来源见 `skills/loop-dev/UPSTREAM.md`，以上游仓库为准），网页启动的 Claude 运行以它为协调规则；已接入 Claude 与 Codex 两个适配器（Codex 无逐条批准，靠只写 worktree、禁网的沙箱）；pi 适配、测试输出面板仍留到后续版本。
+- 2026-10-03 用户授权最小版开发聊天：任务详情内嵌 Agent 面板，经 Claude Agent SDK 为每个任务起一个会话（`src/agent.ts`），仅服务所在机器可驱动（局域网可看板但 agent 接口一律拒绝），页面右侧有可折叠对话栏（新建/历史/切换 Claude 与 Codex；无任务的对话只读），权限请求由网页逐条批准；每个任务一个 git worktree 与 `agent/<ID>` 分支，运行记录存于项目外的 `<父目录>/.olav-tasks-state/<项目名>/`；面板可看分支 diff，`done` 仍只由人点“验收通过”设置，验收后可提交到分支并清理 worktree，分支合并仍是手动；每次运行记录 token 与估算费用，可选预算/回合上限；Claude 运行预置 explorer/implementer/reviewer 三个子 agent 角色（各自固定档位与工具白名单），日志按角色和模型标注；任务可带可选 `check` 命令，服务端在每回合后于 worktree 内独立运行并显示红绿（仅作验收证据，不改状态）。随包分发 `loop-dev` skill（来源见 `skills/loop-dev/UPSTREAM.md`，以上游仓库为准），网页启动的 Claude 运行以它为协调规则；已接入 Claude 与 Codex 两个适配器（Codex 无逐条批准，靠只写 worktree、禁网的沙箱）；pi 适配、测试输出面板仍留到后续版本。
 - 不引入工单系统；第一版无组织、岗位、招聘、审批工作流或云同步。
 
 ## 架构原则

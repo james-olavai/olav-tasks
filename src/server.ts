@@ -12,6 +12,11 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
 }
+// Agents run code with the user's credentials: only the machine running the server may drive them, even when the page is served on the LAN.
+export function isLocalClient(address?: string) {
+  const ip = (address ?? '').replace(/^::ffff:/, '');
+  return ip === '127.0.0.1' || ip === '::1' || localIPv4Addresses().includes(ip);
+}
 export function localIPv4Addresses() {
   return [...new Set(Object.values(networkInterfaces()).flatMap(entries => (entries ?? []).filter(entry => entry.family === 'IPv4').map(entry => entry.address)))].sort();
 }
@@ -51,9 +56,8 @@ export async function startServer(project: Project, options: { turns?: Record<st
   const authorities = new Set([...hosts].map(address => `${address}:${project.port}`));
   const devAuthorities = ['127.0.0.1', 'localhost', '[::1]'].map(address => `${address}:${devPort}`);
   const files = new ProjectFiles(project.root);
-  // Agents run code with the user's credentials: loopback only, never exposed on a LAN bind.
-  const agents = host === '127.0.0.1' ? new AgentRuns(files, project.root, options.turns) : undefined;
-  const agentApi = () => { if (!agents) throw new ApiError(403, 'Agent runs are only available when listening on 127.0.0.1.'); return agents; };
+  const agents = new AgentRuns(files, project.root, options.turns);
+  const agentApi = (request: IncomingMessage) => { if (!isLocalClient(request.socket.remoteAddress)) throw new ApiError(403, 'Agents can only be used from the machine running Olav Tasks.'); return agents; };
   const server = createServer((req, res) => {
     void (async () => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -77,10 +81,10 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (pathname === '/api/tree') { const scan = await files.scan(); json(res, 200, { entries: scan.entries, truncated: scan.truncated, diagnostics: scan.diagnostics }); return; }
           if (pathname === '/api/tasks') { json(res, 200, await files.tasks()); return; }
           if (pathname === '/api/file') { json(res, 200, await files.read(path)); return; }
-          if (pathname === '/api/agent/runs') { json(res, 200, { enabled: !!agents, runs: agents?.list() ?? [] }); return; }
-          if (pathname === '/api/agent/ready') { json(res, 200, { ready: (await agentApi().ready()).map(task => ({ id: task.id, path: task.path, title: task.title })) }); return; }
-          if (pathname === '/api/agent/run') { json(res, 200, agentApi().get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
-          if (pathname === '/api/agent/diff') { json(res, 200, await agentApi().diff(url.searchParams.get('task'))); return; }
+          if (pathname === '/api/agent/runs') { const local = isLocalClient(req.socket.remoteAddress); json(res, 200, { enabled: local, runs: local ? agents.list() : [] }); return; }
+          if (pathname === '/api/agent/ready') { json(res, 200, { ready: (await agentApi(req).ready()).map(task => ({ id: task.id, path: task.path, title: task.title })) }); return; }
+          if (pathname === '/api/agent/run') { json(res, 200, agentApi(req).get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
+          if (pathname === '/api/agent/diff') { json(res, 200, await agentApi(req).diff(url.searchParams.get('task'))); return; }
           if (pathname === '/api/revision') { json(res, 200, { revision: (await files.scan()).revision }); return; }
           if (pathname === '/api/asset') {
             const asset = await files.asset(path);
@@ -91,14 +95,15 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (!req.headers.origin) throw new ApiError(403, "Writes require this application's local Origin.");
           if (!['POST', 'PATCH', 'DELETE'].includes(req.method ?? '')) throw new ApiError(405, 'Method not allowed.');
           const body = await requestBody(req);
-          if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi().start(body.path, body.agent)); return; }
-          if (pathname === '/api/agent/start-ready' && req.method === 'POST') { json(res, 200, await agentApi().startReady(body.paths)); return; }
-          if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi().send(body.task, body.text)); return; }
-          if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi().permission(body.task, body.id, body.allow)); return; }
-          if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi().accept(body.task)); return; }
-          if (pathname === '/api/agent/cleanup' && req.method === 'POST') { json(res, 200, await agentApi().cleanup(body.task)); return; }
-          if (pathname === '/api/agent/recheck' && req.method === 'POST') { json(res, 200, await agentApi().recheck(body.task)); return; }
-          if (pathname === '/api/agent/stop' && req.method === 'POST') { json(res, 200, agentApi().stop(body.task)); return; }
+          if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi(req).start(body.path, body.agent, body.message)); return; }
+          if (pathname === '/api/agent/start-ready' && req.method === 'POST') { json(res, 200, await agentApi(req).startReady(body.paths)); return; }
+          if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text)); return; }
+          if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi(req).send(body.task, body.text)); return; }
+          if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi(req).permission(body.task, body.id, body.allow)); return; }
+          if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi(req).accept(body.task)); return; }
+          if (pathname === '/api/agent/cleanup' && req.method === 'POST') { json(res, 200, await agentApi(req).cleanup(body.task)); return; }
+          if (pathname === '/api/agent/recheck' && req.method === 'POST') { json(res, 200, await agentApi(req).recheck(body.task)); return; }
+          if (pathname === '/api/agent/stop' && req.method === 'POST') { json(res, 200, agentApi(req).stop(body.task)); return; }
           if (pathname === '/api/file' && req.method === 'POST') { json(res, 200, await files.save(body.path, body.content, body.version)); return; }
           if (pathname === '/api/file' && req.method === 'DELETE') { json(res, 200, await files.remove(body.path, body.version)); return; }
           if (pathname === '/api/task' && req.method === 'PATCH') { json(res, 200, await files.updateStatus(body.path, body.status, body.version)); return; }

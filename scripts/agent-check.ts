@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startServer } from '../src/server.js';
+import { isLocalClient, localIPv4Addresses, startServer } from '../src/server.js';
 import { caps, roleAgents, type Turn } from '../src/agent.js';
 
 // hard caps and settings sources come from the environment; invalid values are ignored, unset means unlimited / SDK default
@@ -31,9 +31,10 @@ const prompts: string[] = [];
 const cwds: string[] = [];
 const models: (string | undefined)[] = [];
 const systems: (string | undefined)[] = [];
-const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, resume, canUseTool }) {
-  systems.push(systemPrompt); prompts.push(prompt); cwds.push(cwd); models.push(model);
-  if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
+const flags: boolean[] = [];
+const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, readOnly, resume, canUseTool }) {
+  systems.push(systemPrompt); flags.push(!!readOnly); prompts.push(prompt); cwds.push(cwd); models.push(model);
+  if (!resume && !readOnly) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
     yield { type: 'assistant', message: { model: 'claude-main', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { subagent_type: 'explorer' } }] } };
@@ -84,7 +85,7 @@ assert.ok((await call('/api/agent/run?task=T-1')).data.events.some((e: any) => e
 await call('/api/agent/send', { task: 'T-1', text: 'more' });
 await until(async () => (await call('/api/agent/run?task=T-1&since=3')).data.events.some((e: any) => e.text === 'resumed s1'));
 await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'idle');
-assert.deepEqual((await call('/api/agent/runs')).data.runs.map(({ usage, ...rest }: any) => rest), [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
+assert.deepEqual((await call('/api/agent/runs')).data.runs.map(({ taskId, agent, status, branch }: any) => ({ taskId, agent, status, branch })), [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
 // worktree isolation: agent wrote out.txt in its own worktree, not in the project root
 assert.notEqual(cwds[0], root);
 await assert.rejects(readFile(join(root, 'out.txt'), 'utf8'));
@@ -153,5 +154,31 @@ const codexUsage = (await call('/api/agent/run?task=T-3')).data.usage;
 assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined); assert.notEqual(codexRuns[0], root);
 assert.match(await readFile(join(root, 'T-3.md'), 'utf8'), /assignee: agent:codex/);
 assert.ok((await call('/api/agent/run?task=T-3')).data.events.some((e: any) => e.text.startsWith('codex did')));
+// free conversation: not tied to a task, read-only, no coordinator rules, resumable, cannot be accepted or diffed
+const chat = (await call('/api/agent/chat', { agent: 'claude', text: 'what is in this repo?' })).data;
+assert.match(chat.taskId, /^chat-/); assert.equal(chat.kind, 'chat'); assert.equal(chat.title, 'what is in this repo?');
+await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'blocked');
+await call('/api/agent/permission', { task: chat.taskId, id: (await call(`/api/agent/run?task=${chat.taskId}`)).data.pending.id, allow: true });
+await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
+assert.equal(flags.at(-1), true); assert.equal(systems.at(-1), undefined);
+await assert.rejects(readFile(join(root, 'out.txt'), 'utf8').then(text => { if (text !== undefined) throw new Error('chat wrote to the project root'); }), /chat wrote|ENOENT/);
+assert.equal((await call(`/api/agent/send`, { task: chat.taskId, text: 'more' })).status, 200);
+await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.events.some((e: any) => e.text === 'resumed s1'));
+await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
+const listed = (await call('/api/agent/runs')).data.runs.find((r: any) => r.taskId === chat.taskId);
+assert.equal(listed.kind, 'chat'); assert.ok(listed.updatedAt);
+assert.equal((await call('/api/agent/accept', { task: chat.taskId })).status, 404);
+assert.equal((await call(`/api/agent/diff?task=${chat.taskId}`)).status, 409);
+assert.equal((await call('/api/agent/chat', { agent: 'nope', text: 'x' })).status, 400);
+// conversation-first task start: the user's first message is carried into the run
+await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
+assert.equal((await call('/api/agent/start', { path: 'T-2.md', agent: 'claude', message: 'focus on the parser first' })).status, 200);
+assert.match(prompts.at(-1) ?? '', /Instruction from the user for this run: focus on the parser first/);
+assert.equal((await call('/api/agent/run?task=T-2')).data.events.find((e: any) => e.type === 'user' && /parser/.test(e.text)).text.startsWith('focus on the parser first'), true); // the log shows the user's words, not the generated brief
+await call('/api/agent/stop', { task: 'T-2' });
+// agents are usable only from the machine itself, even when the page is served on the LAN
+assert.ok(isLocalClient('127.0.0.1') && isLocalClient('::1') && isLocalClient('::ffff:127.0.0.1'));
+assert.ok(!isLocalClient('203.0.113.9') && !isLocalClient(undefined));
+if (localIPv4Addresses()[0]) assert.ok(isLocalClient(localIPv4Addresses()[0]));
 server.close();
 console.log('agent-check ok');

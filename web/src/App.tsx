@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AgentPanel, ReadyBar } from './AgentPanel';
+import { ChatDock } from './ChatDock';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Status = 'todo' | 'in-progress' | 'done';
@@ -182,6 +183,7 @@ export function App() {
       </Tabs>
       {!!board?.diagnostics.length && <details className="diagnostics"><summary>任务诊断（{board.diagnostics.length}）</summary><ul>{board.diagnostics.map((item, index) => <li key={`${item.path}-${index}`}><button onClick={() => void open(item.path)}>{item.path}</button>：{item.message}</li>)}</ul></details>}
     </main>
+    <ChatDock tasks={tasks} onOpenTask={path => { setTab('files'); void open(path); }}/>
   </div>;
 }
 
