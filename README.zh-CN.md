@@ -2,15 +2,23 @@
 
 [English](README.md)
 
-以 Markdown 为数据源的本地任务看板与文件管理工具，配套编写、整理 Markdown 与 docs-kb 检索 skills，通过一个 npm 包安装。
+**AI 管理项目，人通过对话来修改。** 项目就是一批 Markdown 文件；网页是只读的看板，右侧对话栏连接本机已登录的 Claude 或 Codex。没有数据库、托管服务和账号。
 
-第一版用于管理本机现有项目，先用本项目的 `backlog/tasks/` 完成开发演示，再接入 `../olav-os`。Kanban 与文件管理读写同一批本地文件。
+- **Markdown 是唯一数据源**：任务是带 YAML frontmatter 的 Markdown，和文档放在同一目录。
+- **AI 操作看板**：通过 `tasks claim/new/validate/digest` 这几个原子、带校验的命令改状态，并向你汇报：先说需要你拍板的事，再说风险、进展和下一步。
+- **人只对话，随时可看**：网页不改任务；你在对话栏提需求，用 Activity 页（基于 git）查看 AI 到底改了什么。
+
+适用于任意项目目录（不限软件项目），以 npm 包形式安装。完整说明见[英文 README](README.md)。
 
 ## 当前状态
 
-2026-10-01：界面提供 Backlog、Kanban、Dependencies、Gantt、Files 五个图标页签。任务状态由 Agent 编辑 Markdown 维护，Kanban 和有效任务文件正文只读；普通 Markdown 可编辑保存。依赖图显示真实依赖、缺失任务及循环关系；Gantt 只展示明确填写有效 start_date 和 end_date 的任务，其他任务列为未排期，不推算日期。Backlog 表格和 Kanban 卡片展示可选的负责人、工作量、subagent 模型档位、父任务与阻塞说明；无负责人显示“未分配”，其他缺失字段显示“—”，窄屏表格支持横向滚动。
+界面顶栏居中是一组图标：Backlog、Kanban、Dependencies、Gantt、Files、Activity 六个视图加一个对话开关。任务状态由 Agent 编辑 Markdown 维护，网页对任务只读；普通 Markdown 可在 Files 页编辑保存（有版本冲突检测）。依赖图显示真实依赖、缺失任务及循环；Gantt 只展示填写了有效 start_date 和 end_date 的任务，其余列为未排期，不推算日期。Backlog 与 Kanban 展示可选的负责人、工作量、模型档位、父任务与阻塞说明。**Activity** 是只读页：从 git 显示未提交改动和近期提交，每个文件有着色 diff，任务文件旁标出任务 ID。
 
-本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理、执行与 docs-kb 五个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)。npm 包尚未公开发布，包名尚未核实可用性。
+右侧**对话栏**使用本机已认证的 Claude Agent SDK 或 Codex SDK，在项目根目录工作；Claude 的每次工具调用在对话栏里批准，Codex 在沙箱内运行；发送旁的 YOLO 选项绕过所有权限确认。每个新对话以项目经理身份开始：带上工作规则，并在第一条消息里附上 `PROJECT.md`（目标、优先级、完成的定义、工作约定、决策日志）和看板摘要（计数、进行中、就绪、等人拍板的事）。局域网默认可用（`OLAV_TASKS_AGENT_LAN=0` 收回），YOLO 仅服务所在机器可用。页面本身没有登录，只应在可信网络里使用。
+
+**给 AI 项目经理的命令**：`tasks list`、`tasks ready`（只读快照）；`tasks claim <目录> <ID> --as agent:x`（原子写入进行中与负责人，未就绪或被他人持有即失败）；`tasks new --title …`（分配下一个未占用 ID，独占创建，标题始终加引号）；`tasks validate`（有诊断时退出码为 1）；`tasks digest`（等人拍板、过期、陈旧、进度、关键路径）。
+
+本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理、执行、汇报与 docs-kb 六个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)。npm 包尚未公开发布，包名尚未核实可用性。
 
 ## 本地开发与启动
 
@@ -91,9 +99,10 @@ npm install /绝对路径/olav-tasks-0.1.0.tgz
 ```bash
 node dist/cli.js skills install olav-tasks-plan --dir /你的/Agent技能目录
 node dist/cli.js skills install olav-tasks-execute --dir /你的/Agent技能目录
+node dist/cli.js skills install olav-tasks-report --dir /你的/Agent技能目录
 ```
 
-五个 skills 均随当前 npm 包分发，由客户端发现与加载，无需额外 skill 入口服务。执行 skill 在活跃代理会话中按项目权限协调原生子代理和独立 QA，不启动后台调度。
+六个 skills 均随当前 npm 包分发，由客户端发现与加载，无需额外 skill 入口服务。执行 skill 在活跃代理会话中按项目权限协调原生子代理和独立 QA，不启动后台调度；汇报 skill 把 `tasks digest` 变成汇报：先说需要你决定的，再说风险、进展与下一步，结论基于核实过的事实。
 
 升级遇到已有不同内容时拒绝覆盖。卸载仅接受与当前包完整一致的目录；旧版本、用户修改或额外文件需自行审阅处理，不自动移除：
 
