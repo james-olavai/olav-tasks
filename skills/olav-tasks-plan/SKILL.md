@@ -44,6 +44,8 @@ depends_on: []
 
 项目采用父子任务或外部门治理扩展时，子任务写 `parent: <父任务ID>`；待用户决定或外部门写 `blocked_by: <阻塞说明>` 并在正文说明，解除后删除该字段。父任务须子任务全部 done 且父级验收通过才能 done。纯排序门写入 `depends_on` 时在正文注明。这两个字段由 CLI/API 和网页只读展示；`tasks ready` 只提供候选快照，执行前仍须重读任务原文。
 
+新建任务优先用 `olav-tasks tasks new <项目目录> --title …`：它分配下一个未占用的 ID、独占创建文件并给标题加引号；直接改 Markdown 后运行 `olav-tasks tasks validate <项目目录>`，有诊断就先修好再继续。
+
 正文写目标、范围和验收条件；依赖填真实任务 ID，未决问题写在正文。普通方案文档无需任务字段。新项目无约定时可用 `backlog/tasks/` 存任务、`BACKLOG.md` 存相对链接索引。
 
 更新保留稳定 ID、已有状态、assignee、effort、model_profile、check、未知字段和无关正文；索引不重复维护任务状态。规划不代表开始执行或验收完成，不将任务改为 `in-progress` 或 `done`。状态 owner 与验收门遵项目规则；执行者实际开始可记 in-progress，done 由协调者依据最终成果的独立验收设置。执行闭环可使用 `olav-tasks-execute`。网页任务视图只读。既有其他任务格式保持原样，转成看板任务需包含在用户要求内。

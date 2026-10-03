@@ -7,17 +7,42 @@ import { formatSearchResult, searchDocs } from './docs-kb.js';
 import { installSkill, listSkills, uninstallSkill } from './skills.js';
 import { ProjectFiles } from './project-files.js';
 import { taskReadiness } from './task-readiness.js';
+import { claimTask, newTask, validateProject } from './pm-tools.js';
 
 async function tasksCommand(args: string[]) {
-  const { values, positionals } = parseArgs({ args, options: { help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' } }, allowPositionals: true });
-  if (values.help) { console.log('Usage: olav-tasks tasks list <project-directory> [--json]\n       olav-tasks tasks ready <project-directory> [--json]\nRead-only snapshots; ready is not an execution reservation.'); return; }
-  if (positionals.length !== 2 || !['list', 'ready'].includes(positionals[0])) throw new Error('Use tasks list or tasks ready with one project directory.');
-  const root = await realpath(positionals[1]);
+  const { values, positionals } = parseArgs({ args, options: {
+    help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' },
+    as: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string' }, depends: { type: 'string' },
+    parent: { type: 'string' }, dir: { type: 'string' }, prefix: { type: 'string' }, body: { type: 'string' },
+  }, allowPositionals: true });
+  const usage = 'Usage: olav-tasks tasks list <project-directory> [--json]\n       olav-tasks tasks ready <project-directory> [--json]\n       olav-tasks tasks claim <project-directory> <task-ID> --as <human:ID|agent:ID> [--json]\n       olav-tasks tasks new <project-directory> --title <text> [--priority P0|P1|P2] [--depends A,B] [--parent ID] [--dir <relative dir>] [--prefix PFX] [--body <text>] [--json]\n       olav-tasks tasks validate <project-directory> [--json]\nlist and ready are read-only snapshots; ready is not an execution reservation. claim atomically sets in-progress and the assignee, and fails if the task is not ready or is held by someone else. new allocates the next free ID. validate exits 1 when the board would show diagnostics.';
+  if (values.help) { console.log(usage); return; }
+  const [sub, dir, id] = positionals;
+  if (!['list', 'ready', 'claim', 'new', 'validate'].includes(sub) || !dir || (sub === 'claim' ? positionals.length !== 3 : positionals.length !== 2)) throw new Error(`Invalid tasks command.\n${usage}`);
+  const root = await realpath(dir);
   if (!(await stat(root)).isDirectory()) throw new Error('Project path must be a directory.');
+  if (sub === 'claim') {
+    if (!values.as) throw new Error('claim needs --as <human:ID|agent:ID>.');
+    const result = await claimTask(root, id, values.as);
+    console.log(values.json ? JSON.stringify(result) : `${result.already ? 'Already claimed' : 'Claimed'} ${result.id} for ${result.assignee} (${result.path})`);
+    return;
+  }
+  if (sub === 'new') {
+    const result = await newTask(root, { title: values.title ?? '', priority: values.priority, depends: values.depends?.split(',').map(item => item.trim()).filter(Boolean), parent: values.parent, dir: values.dir, prefix: values.prefix, body: values.body });
+    console.log(values.json ? JSON.stringify(result) : `Created ${result.id} (${result.path})`);
+    return;
+  }
+  if (sub === 'validate') {
+    const result = await validateProject(root);
+    if (values.json) console.log(JSON.stringify(result));
+    else console.log(result.ok ? `OK: ${result.tasks} tasks, no diagnostics.` : `${result.diagnostics.length} diagnostics${result.truncated ? ', scan truncated' : ''}:\n${result.diagnostics.map(item => `${item.path}: ${item.message}`).join('\n')}`);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
   const listing = await new ProjectFiles(root).tasks();
-  const result = positionals[0] === 'ready' ? taskReadiness(listing) : listing;
+  const result = sub === 'ready' ? taskReadiness(listing) : listing;
   if (values.json) { console.log(JSON.stringify(result)); return; }
-  if (positionals[0] === 'ready') {
+  if (sub === 'ready') {
     const ready = result as ReturnType<typeof taskReadiness>;
     console.log(ready.complete ? ready.tasks.map(task => `${task.id}\t${task.path}\t${task.title}`).join('\n') || 'No ready tasks.' : 'Task scan or graph is incomplete; no tasks are ready.');
   } else console.log(listing.tasks.map(task => `${task.id}\t${task.status}\t${task.path}\t${task.title}`).join('\n') || 'No tasks.');

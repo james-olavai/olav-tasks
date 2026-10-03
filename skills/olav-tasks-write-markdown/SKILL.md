@@ -35,6 +35,8 @@ depends_on: []
 
 项目采用父子任务或外部门治理扩展时，子任务写 `parent: <父任务ID>`；待用户决定或外部门写 `blocked_by: <阻塞说明>` 并在正文说明，解除后删除该字段。父任务须子任务全部 done 且父级验收通过才能 done。纯排序门写入 `depends_on` 时在正文注明。CLI/API 和网页只读展示这些字段；`tasks ready` 是候选快照，派工前仍须重读任务原文。
 
+新建任务优先用 `olav-tasks tasks new <项目目录> --title …`：它分配下一个未占用的 ID、独占创建文件并给标题加引号；直接改 Markdown 后运行 `olav-tasks tasks validate <项目目录>`，有诊断就先修好再继续。
+
 正文写目标、范围与可观察的验收条件。priority 可省略或使用 P0/P1/P2；depends_on 可省略或填写真实任务 ID。目录由项目决定，无约定时可用 backlog/tasks/；索引使用相对链接，不重复维护状态。
 
 更新前读取现有文件；保留稳定 ID、assignee、effort、model_profile、check、未知字段、无关正文与有效引用。若读取后文件发生变化，重新读取并合并，不以旧内容覆盖。

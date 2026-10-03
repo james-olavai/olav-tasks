@@ -179,6 +179,18 @@ export class ProjectFiles {
       return this.read(path);
     });
   }
+  // Status and assignee change in ONE write, guarded by the version the caller read, so a concurrent edit is detected instead of overwritten.
+  claim(value: unknown, assignee: string, version: unknown) {
+    return this.serial(async () => {
+      const path = validatePath(value); markdown(path);
+      const expected = validVersion(version);
+      const original = await this.check(path, expected);
+      let content: string;
+      try { content = setTaskField(replaceTaskStatus(utf8(original.body), 'in-progress'), 'assignee', assignee); } catch (error) { throw new ApiError(400, error instanceof Error ? error.message : 'Invalid task file.'); }
+      await this.replace(path, Buffer.from(content, 'utf8'), expected);
+      return this.read(path);
+    });
+  }
   setMeta(value: unknown, field: 'assignee' | 'model_profile', text: unknown, version: unknown) {
     return this.serial(async () => {
       const path = validatePath(value); markdown(path);

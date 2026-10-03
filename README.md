@@ -55,6 +55,16 @@ Each task is a Markdown file with YAML frontmatter. The format supports `status`
 
 Read-only task snapshots are available with `olav-tasks tasks list /path/to/project --json` and `olav-tasks tasks ready /path/to/project --json`. The ready response contains `tasks`, `excluded`, `diagnostics`, `revision`, and `complete`; an incomplete scan or invalid graph returns no candidates. This is a snapshot, not a reservation or permission to execute.
 
+Operations an AI project manager needs to change the board safely (the web page stays read-only; people ask the agent in the chat dock or their own agent session):
+
+```bash
+olav-tasks tasks claim /path/to/project OT-007 --as agent:codex   # in-progress + assignee in one write; fails if not ready or held by someone else
+olav-tasks tasks new /path/to/project --title "Fix login" --priority P1 --depends OT-003   # next free ID, exclusive file creation, title always quoted
+olav-tasks tasks validate /path/to/project                          # exit 1 when the board would show diagnostics
+```
+
+`claim` is atomic across processes (a lock file beside the project, never inside it) and idempotent for the same assignee. `new` never reuses an ID, even with concurrent creators. All three accept `--json`.
+
 The web app reads and writes the selected local project directory. Agents maintain task status and dates in the source files; task cards and valid task documents are read-only in the browser. Ordinary Markdown files can be edited in the Files view. Before saving, the app checks whether the file changed externally and reports conflicts rather than silently overwriting newer content.
 
 The file browser supports `.md` file operations. Other files may be listed but cannot be edited, moved, or deleted. Safe image previews support PNG, JPEG, GIF, WebP, and AVIF; SVG and raw HTML in Markdown are not rendered. Hidden files, `node_modules`, `dist`, `build`, `coverage`, `references`, `archive`, and `data` are skipped. Scanning is limited to 10,000 entries and 64 directory levels. Markdown files larger than 8 MiB are not opened.
