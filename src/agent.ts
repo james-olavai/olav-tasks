@@ -54,6 +54,26 @@ export class AgentRuns {
     const run = this.run(taskId);
     return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
+  // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
+  async ready() {
+    const { tasks } = await this.files.tasks();
+    const done = new Set(tasks.filter(task => task.status === 'done').map(task => task.id));
+    const known = new Set(tasks.map(task => task.id));
+    return tasks.filter(task => task.status === 'todo' && task.depends_on.every(id => known.has(id) && done.has(id)) && !this.active(task.id))
+      .sort((a, b) => (a.priority ?? 'P3').localeCompare(b.priority ?? 'P3') || a.id.localeCompare(b.id, 'en', { numeric: true }));
+  }
+  // ponytail: fixed cap so a click cannot fan out unbounded agents/cost; make it a setting if it needs tuning.
+  async startReady(paths?: unknown) {
+    if (paths !== undefined && !(Array.isArray(paths) && paths.every(item => typeof item === 'string'))) throw new ApiError(400, 'paths must be a list of text.');
+    const max = Number(process.env.OLAV_TASKS_MAX_RUNS ?? 2) || 2;
+    const started: string[] = []; const skipped: { id: string; reason: string }[] = [];
+    for (const task of (await this.ready()).filter(item => !paths || paths.includes(item.path))) {
+      if ([...this.runs.values()].filter(run => run.status === 'running' || run.status === 'blocked').length >= max) { skipped.push({ id: task.id, reason: `已达并行上限 ${max}` }); continue; }
+      try { await this.start(task.path); started.push(task.id); } catch (error) { skipped.push({ id: task.id, reason: error instanceof Error ? error.message : String(error) }); }
+    }
+    return { started, skipped, max };
+  }
+  private active(taskId: string) { const status = this.runs.get(taskId)?.status; return status === 'running' || status === 'blocked'; }
   async start(path: unknown) {
     if (typeof path !== 'string') throw new ApiError(400, 'path must be text.');
     const board = await this.files.tasks();

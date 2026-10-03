@@ -8,12 +8,17 @@ import { startServer } from '../src/server.js';
 import type { Turn } from '../src/agent.js';
 
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
+process.env.OLAV_TASKS_MAX_RUNS = '1';
 process.env.OLAV_TASKS_MODELS = JSON.stringify({ deep: 'model-deep' });
 const root = join(parent, 'proj');
 execFileSync('mkdir', [root]);
 await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\n---\n\nDo the thing.\n');
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root });
-git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'init');
+git('init', '-q');
+await writeFile(join(root, 'T-2.md'), '---\nschema: olav.tasks/v1\nid: T-2\ntitle: Second\nstatus: todo\ndepends_on: [T-1]\n---\n\nNeeds T-1.\n');
+await writeFile(join(root, 'T-3.md'), '---\nschema: olav.tasks/v1\nid: T-3\ntitle: Third\nstatus: todo\ndepends_on: [T-1]\n---\n\nAlso needs T-1.\n');
+await writeFile(join(root, 'T-4.md'), '---\nschema: olav.tasks/v1\nid: T-4\ntitle: Fourth\nstatus: todo\ndepends_on: [T-9]\n---\n\nMissing dependency.\n');
+git('add', '-A'); git('commit', '-qm', 'init');
 const prompts: string[] = [];
 const cwds: string[] = [];
 const models: (string | undefined)[] = [];
@@ -77,5 +82,11 @@ assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/
 assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, true);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
+// dependency-aware dispatch: T-2/T-3 unlock once T-1 is done; T-4 depends on a missing task and never becomes ready
+assert.deepEqual((await call('/api/agent/ready')).data.ready.map((t: any) => t.id), ['T-2', 'T-3']);
+const batch = (await call('/api/agent/start-ready', {})).data;
+assert.deepEqual(batch.started, ['T-2']);
+assert.deepEqual(batch.skipped.map((item: any) => item.id), ['T-3']); // cap of 1 concurrent run
+await call('/api/agent/stop', { task: 'T-2' });
 server.close();
 console.log('agent-check ok');

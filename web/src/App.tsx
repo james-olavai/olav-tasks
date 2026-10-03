@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { AgentPanel } from './AgentPanel';
+import { AgentPanel, ReadyBar } from './AgentPanel';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Status = 'todo' | 'in-progress' | 'done';
@@ -162,6 +162,7 @@ export function App() {
         <TabsContent value="backlog">{!tasks.length ? <p className="empty-label">暂无任务</p> : <div className="table-scroll"><table className="backlog-table"><thead><tr><th>任务</th><th>状态</th><th>优先级</th><th>负责人</th><th>工作量</th><th>模型档位</th><th>依赖</th><th>日期</th></tr></thead><tbody>{tasks.map(task => <tr key={task.path}><td><button className="backlog-task" disabled={busy || opening} onClick={() => void open(task.path)}><span className="task-id">{task.id}</span>{task.title}</button></td><td><span className={`status-badge ${task.status}`}>{columns.find(column => column.status === task.status)?.label}</span></td><td>{task.priority ?? '—'}</td><td className="assignee-cell">{task.assignee ?? '未分配'}</td><td>{task.effort ?? '—'}</td><td>{task.model_profile ?? '—'}</td><td className="dependencies-cell">{task.depends_on.join('、') || '—'}</td><td className="date-cell">{task.start_date ?? '—'} / {task.end_date ?? '—'}</td></tr>)}</tbody></table></div>}</TabsContent>
         <TabsContent value="board">
           {!tasks.length && <p className="empty-label">暂无任务</p>}
+          <ReadyBar onOpen={path => void open(path)}/>
           <div className="kanban">{columns.map(column => <section className="kanban-column" key={column.status} aria-label={column.label}><h3>{column.label}<span>{tasks.filter(task => task.status === column.status).length}</span></h3>
             {tasks.filter(task => task.status === column.status).map(task => <Card className="task-card" key={task.path}><div className="task-meta"><span>{task.id}</span>{task.priority && <span className="priority">{task.priority}</span>}</div><button className="task-title" disabled={busy || opening} onClick={() => void open(task.path)}>{task.title}</button><dl className="task-collaboration"><div><dt>负责人</dt><dd>{task.assignee ?? '未分配'}</dd></div><div><dt>工作量</dt><dd>{task.effort ?? '—'}</dd></div><div><dt>模型档位</dt><dd>{task.model_profile ?? '—'}</dd></div></dl>{task.depends_on.length > 0 && <p className="task-dependencies">依赖：{task.depends_on.join('、')}</p>}<p className="task-path">{task.path}</p></Card>)}
           </section>)}</div>

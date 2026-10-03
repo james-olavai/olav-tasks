@@ -61,7 +61,7 @@ The app checks file metadata every two seconds for external changes; it is not a
 
 ## Run an agent on a task (optional)
 
-On a task's detail page, "用 Claude 开始" starts a Claude Agent SDK session in its own git worktree (`agent/<task ID>`), under `<parent dir>/.olav-tasks-state/<project>/`. Permission requests are approved in the page; "验收通过" is the only action that sets a task to `done`, and merging the branch stays manual. It uses your existing Claude login and is available only when listening on `127.0.0.1`. Map the `model_profile` tiers to model IDs with `OLAV_TASKS_MODELS='{"fast":"…","balanced":"…","deep":"…"}'`; unset tiers use the default model. `npx tsx scripts/agent-check.ts` exercises the flow with a fake agent.
+On a task's detail page, "用 Claude 开始" starts a Claude Agent SDK session in its own git worktree (`agent/<task ID>`), under `<parent dir>/.olav-tasks-state/<project>/`. Permission requests are approved in the page; "验收通过" is the only action that sets a task to `done`, and merging the branch stays manual. It uses your existing Claude login and is available only when listening on `127.0.0.1`. Map the `model_profile` tiers to model IDs with `OLAV_TASKS_MODELS='{"fast":"…","balanced":"…","deep":"…"}'`; unset tiers use the default model. The Kanban view lists tasks whose dependencies are all done and offers "开始就绪任务" (an explicit click; at most `OLAV_TASKS_MAX_RUNS`, default 2, run at once). `npx tsx scripts/agent-check.ts` exercises the flow with a fake agent.
 
 ## Search project documentation
 
