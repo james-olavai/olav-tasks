@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isLocalClient, localIPv4Addresses, startServer } from '../src/server.js';
+import { agentAllowed, isLocalClient, localIPv4Addresses, startServer, yoloAllowed } from '../src/server.js';
 import { caps, roleAgents, type Turn } from '../src/agent.js';
 
 // hard caps and settings sources come from the environment; invalid values are ignored, unset means unlimited / SDK default
@@ -32,12 +32,12 @@ const prompts: string[] = [];
 const cwds: string[] = [];
 const models: (string | undefined)[] = [];
 const systems: (string | undefined)[] = [];
-const flags: boolean[] = [];
+const yolos: boolean[] = [];
 const efforts: (string | undefined)[] = [];
 const codexSeen: { model?: string; effort?: string }[] = [];
-const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, readOnly, effort, resume, canUseTool }) {
-  efforts.push(effort); systems.push(systemPrompt); flags.push(!!readOnly); prompts.push(prompt); cwds.push(cwd); models.push(model);
-  if (!resume && !readOnly) await writeFile(join(cwd, 'out.txt'), 'hello\n');
+const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, yolo, effort, resume, canUseTool }) {
+  efforts.push(effort); systems.push(systemPrompt); yolos.push(!!yolo); prompts.push(prompt); cwds.push(cwd); models.push(model);
+  if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
     yield { type: 'assistant', message: { model: 'claude-main', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { subagent_type: 'explorer' } }] } };
@@ -163,14 +163,14 @@ const codexUsage = (await call('/api/agent/run?task=T-3')).data.usage;
 assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined); assert.notEqual(codexRuns[0], root);
 assert.match(await readFile(join(root, 'T-3.md'), 'utf8'), /assignee: agent:codex/);
 assert.ok((await call('/api/agent/run?task=T-3')).data.events.some((e: any) => e.text.startsWith('codex did')));
-// free conversation: not tied to a task, read-only, no coordinator rules, resumable, cannot be accepted or diffed
+// free conversation: not tied to a task, runs in the project root, resumable, cannot be accepted or diffed
 const chat = (await call('/api/agent/chat', { agent: 'claude', text: 'what is in this repo?' })).data;
 assert.match(chat.taskId, /^chat-/); assert.equal(chat.kind, 'chat'); assert.equal(chat.title, 'what is in this repo?');
 await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'blocked');
 await call('/api/agent/permission', { task: chat.taskId, id: (await call(`/api/agent/run?task=${chat.taskId}`)).data.pending.id, allow: true });
 await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
-assert.equal(flags.at(-1), true); assert.equal(systems.at(-1), undefined);
-await assert.rejects(readFile(join(root, 'out.txt'), 'utf8').then(text => { if (text !== undefined) throw new Error('chat wrote to the project root'); }), /chat wrote|ENOENT/);
+// a conversation works in the project root (not a worktree) with the coordinator rules off; YOLO is off unless asked for
+assert.equal(cwds.at(-1), root); assert.equal(systems.at(-1), undefined); assert.equal(yolos.at(-1), false);
 assert.equal((await call(`/api/agent/send`, { task: chat.taskId, text: 'more' })).status, 200);
 await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.events.some((e: any) => e.text === 'resumed s1'));
 await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
@@ -186,9 +186,16 @@ assert.equal((await call('/api/agent/start', { path: 'T-2.md', agent: 'claude', 
 assert.match(prompts.at(-1) ?? '', /Instruction from the user for this run: focus on the parser first/);
 assert.equal((await call('/api/agent/run?task=T-2')).data.events.find((e: any) => e.type === 'user' && /parser/.test(e.text)).text.startsWith('focus on the parser first'), true); // the log shows the user's words, not the generated brief
 await call('/api/agent/stop', { task: 'T-2' });
-// agents are usable only from the machine itself, even when the page is served on the LAN
+// YOLO: accepted from the host machine and recorded per turn; follow-up turns default back to off
+const yoloChat = (await call('/api/agent/chat', { agent: 'claude', text: 'go fast', yolo: true })).data;
+assert.equal(yoloChat.yolo, true); assert.equal(yolos.at(-1), true);
+await call('/api/agent/stop', { task: yoloChat.taskId });
+// agents are usable from the LAN by default, YOLO only from the host machine, both adjustable by environment
 assert.ok(isLocalClient('127.0.0.1') && isLocalClient('::1') && isLocalClient('::ffff:127.0.0.1'));
 assert.ok(!isLocalClient('203.0.113.9') && !isLocalClient(undefined));
 if (localIPv4Addresses()[0]) assert.ok(isLocalClient(localIPv4Addresses()[0]));
+assert.ok(agentAllowed('203.0.113.9')); assert.ok(!yoloAllowed('203.0.113.9')); assert.ok(yoloAllowed('127.0.0.1'));
+process.env.OLAV_TASKS_ALLOW_LAN_YOLO = '1'; assert.ok(yoloAllowed('203.0.113.9')); delete process.env.OLAV_TASKS_ALLOW_LAN_YOLO;
+process.env.OLAV_TASKS_AGENT_LAN = '0'; assert.ok(!agentAllowed('203.0.113.9')); assert.ok(agentAllowed('127.0.0.1')); delete process.env.OLAV_TASKS_AGENT_LAN;
 server.close();
 console.log('agent-check ok');

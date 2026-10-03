@@ -12,11 +12,15 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
 }
-// Agents run code with the user's credentials: only the machine running the server may drive them, even when the page is served on the LAN.
+// Agents run code with the host's logins. By default LAN clients may use them (the page is meant to be shared on the LAN);
+// OLAV_TASKS_AGENT_LAN=0 restricts them to the machine running the server. YOLO (all permission checks bypassed) is stricter:
+// only the host machine, unless OLAV_TASKS_ALLOW_LAN_YOLO=1, because on an unauthenticated LAN page it is remote code execution.
 export function isLocalClient(address?: string) {
   const ip = (address ?? '').replace(/^::ffff:/, '');
   return ip === '127.0.0.1' || ip === '::1' || localIPv4Addresses().includes(ip);
 }
+export const agentAllowed = (address?: string) => process.env.OLAV_TASKS_AGENT_LAN !== '0' || isLocalClient(address);
+export const yoloAllowed = (address?: string) => isLocalClient(address) || process.env.OLAV_TASKS_ALLOW_LAN_YOLO === '1';
 export function localIPv4Addresses() {
   return [...new Set(Object.values(networkInterfaces()).flatMap(entries => (entries ?? []).filter(entry => entry.family === 'IPv4').map(entry => entry.address)))].sort();
 }
@@ -57,7 +61,12 @@ export async function startServer(project: Project, options: { turns?: Record<st
   const devAuthorities = ['127.0.0.1', 'localhost', '[::1]'].map(address => `${address}:${devPort}`);
   const files = new ProjectFiles(project.root);
   const agents = new AgentRuns(files, project.root, options.turns);
-  const agentApi = (request: IncomingMessage) => { if (!isLocalClient(request.socket.remoteAddress)) throw new ApiError(403, 'Agents can only be used from the machine running Olav Tasks.'); return agents; };
+  const agentApi = (request: IncomingMessage) => { if (!agentAllowed(request.socket.remoteAddress)) throw new ApiError(403, 'Agents can only be used from the machine running Olav Tasks.'); return agents; };
+  const yolo = (request: IncomingMessage, value: unknown) => {
+    if (value !== true) return false;
+    if (!yoloAllowed(request.socket.remoteAddress)) throw new ApiError(403, 'YOLO mode is only available from the machine running Olav Tasks.');
+    return true;
+  };
   const server = createServer((req, res) => {
     void (async () => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -81,7 +90,7 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (pathname === '/api/tree') { const scan = await files.scan(); json(res, 200, { entries: scan.entries, truncated: scan.truncated, diagnostics: scan.diagnostics }); return; }
           if (pathname === '/api/tasks') { json(res, 200, await files.tasks()); return; }
           if (pathname === '/api/file') { json(res, 200, await files.read(path)); return; }
-          if (pathname === '/api/agent/runs') { const local = isLocalClient(req.socket.remoteAddress); json(res, 200, { enabled: local, runs: local ? agents.list() : [] }); return; }
+          if (pathname === '/api/agent/runs') { const allowed = agentAllowed(req.socket.remoteAddress); json(res, 200, { enabled: allowed, yolo: allowed && yoloAllowed(req.socket.remoteAddress), runs: allowed ? agents.list() : [] }); return; }
           if (pathname === '/api/agent/ready') { json(res, 200, { ready: (await agentApi(req).ready()).map(task => ({ id: task.id, path: task.path, title: task.title })) }); return; }
           if (pathname === '/api/agent/run') { json(res, 200, agentApi(req).get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
           if (pathname === '/api/agent/diff') { json(res, 200, await agentApi(req).diff(url.searchParams.get('task'))); return; }
@@ -97,8 +106,8 @@ export async function startServer(project: Project, options: { turns?: Record<st
           const body = await requestBody(req);
           if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi(req).start(body.path, body.agent, body.message)); return; }
           if (pathname === '/api/agent/start-ready' && req.method === 'POST') { json(res, 200, await agentApi(req).startReady(body.paths)); return; }
-          if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text)); return; }
-          if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi(req).send(body.task, body.text)); return; }
+          if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text, yolo(req, body.yolo))); return; }
+          if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi(req).send(body.task, body.text, yolo(req, body.yolo))); return; }
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi(req).permission(body.task, body.id, body.allow)); return; }
           if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi(req).accept(body.task)); return; }
           if (pathname === '/api/agent/cleanup' && req.method === 'POST') { json(res, 200, await agentApi(req).cleanup(body.task)); return; }

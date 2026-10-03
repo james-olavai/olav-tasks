@@ -18,9 +18,9 @@ export type Usage = { cost_usd?: number; input: number; output: number; cache_re
 type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
 // Result of the task's own check command, run by the server (not the agent) in the run's worktree.
 export type CheckResult = { command: string; ok: boolean; exit: number | null; timedOut: boolean; ms: number; output: string; at: string };
-type Run = { kind?: 'task' | 'chat'; title?: string; updatedAt?: string; check?: CheckResult; spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage', 'check', 'kind', 'title', 'updatedAt'] as const;
-export type TurnOptions = { prompt: string; cwd: string; readOnly?: boolean; effort?: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
+type Run = { yolo?: boolean; kind?: 'task' | 'chat'; title?: string; updatedAt?: string; check?: CheckResult; spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage', 'check', 'kind', 'title', 'updatedAt', 'yolo'] as const;
+export type TurnOptions = { prompt: string; cwd: string; yolo?: boolean; effort?: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
 // Optional hard limits from the environment; unset means no limit. OLAV_TASKS_MAX_BUDGET_USD / OLAV_TASKS_MAX_TURNS cap one turn.
@@ -50,7 +50,7 @@ export const roleAgents = () => {
     reviewer: { description: 'Independent read-only review of the actual diff and acceptance evidence. Never edits files.', prompt: 'You independently review the diff against the acceptance criteria. Do not edit files. Report failures with evidence, not opinions.', tools: ['Read', 'Grep', 'Glob', 'Bash'], model: model('reviewer', 'opus'), effort: effort('reviewer') },
   };
 };
-export const claudeTurn: Turn = async function* ({ prompt, cwd, readOnly, effort, systemPrompt, model, resume, signal, canUseTool }) {
+export const claudeTurn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
@@ -63,17 +63,18 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, readOnly, effort
   for await (const message of query({
     prompt,
     options: {
-      cwd, abortController, ...(readOnly ? { disallowedTools: ['Edit', 'Write', 'NotebookEdit'], allowedTools: ['Read', 'Grep', 'Glob'] } : { agents: roleAgents() }), ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(claudeEfforts.includes(effort ?? '') ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
+      cwd, abortController, allowedTools: ['Read', 'Grep', 'Glob'], agents: roleAgents(), ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(claudeEfforts.includes(effort ?? '') ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), ...(resume ? { resume } : {}), // YOLO = every permission check bypassed (the caller has already decided who may ask for it).
+      ...(yolo ? { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true } : { permissionMode: 'default', permissionPrompts: 'host' }),
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   })) yield message.type === 'result' ? { ...message, reported: reported(message) } : message;
 };
 
 // Codex SDK has no per-tool approval callback (it wraps non-interactive `codex exec`), so a Codex run never reaches `blocked`.
-// Its safety boundary is the sandbox instead: writes only inside the task worktree, no network, never asks.
-export const codexTurn: Turn = async function* ({ prompt, cwd, readOnly, effort, model, resume, signal }) {
+// Its safety boundary is the sandbox instead: writes only inside its working directory, no network, never asks. YOLO lifts both.
+export const codexTurn: Turn = async function* ({ prompt, cwd, yolo, effort, model, resume, signal }) {
   const { Codex } = await import('@openai/codex-sdk');
-  const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: readOnly ? 'read-only' : 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, ...(model ? { model } : {}), ...(codexEfforts.includes(effort ?? '') ? { modelReasoningEffort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' } : {}) } as const;
+  const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: yolo ? 'danger-full-access' : 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: !!yolo, ...(model ? { model } : {}), ...(codexEfforts.includes(effort ?? '') ? { modelReasoningEffort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' } : {}) } as const;
   const codex = new Codex();
   const thread = resume ? codex.resumeThread(resume, options) : codex.startThread(options);
   const { events } = await thread.runStreamed(prompt, { signal });
@@ -151,7 +152,7 @@ export class AgentRuns {
   list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage, kind, title, updatedAt, path }) => ({ taskId, agent, status, kind: kind ?? 'task', title: title ?? taskId, updatedAt: updatedAt ?? null, ...(path ? { path } : {}), ...(usage ? { usage } : {}), ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, kind: run.kind ?? 'task', title: run.title ?? taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, yolo: !!run.yolo, kind: run.kind ?? 'task', title: run.title ?? taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
   async ready() {
@@ -195,25 +196,25 @@ export class AgentRuns {
     this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria.${task.check ? `\n\nCheck command (must exit 0; the server also runs it independently after your turn, in your worktree): ${task.check}` : ''} Do not mark the task done; a human reviews and sets status.${message?.trim() ? `\n\nInstruction from the user for this run: ${message.trim()}` : ''}`, `${message?.trim() ? `${message.trim()}\n` : ''}（任务 ${task.id}：${task.title}）`);
     return this.get(task.id);
   }
-  // A free conversation: not tied to a task, runs in the project root, read-only (a task run, in its own worktree, is where code changes happen).
-  chat(requested: unknown, text: unknown) {
+  // A free conversation: not tied to a task; the agent works in the project root like a normal terminal session.
+  chat(requested: unknown, text: unknown, yolo = false) {
     const agent = typeof requested === 'string' && this.turns[requested] ? requested : undefined;
     if (!agent) throw new ApiError(400, `agent must be one of: ${Object.keys(this.turns).join(', ')}.`);
     if (typeof text !== 'string' || !text.trim()) throw new ApiError(400, 'text must be nonempty.');
     const id = `chat-${randomUUID().slice(0, 8)}`;
     const run: Run = { taskId: id, path: '', kind: 'chat', title: text.trim().slice(0, 60), agent, status: 'running', events: [], workdir: this.root, abort: new AbortController() };
     this.runs.set(id, run);
-    this.go(run, text.trim());
+    this.go(run, text.trim(), undefined, yolo);
     return this.get(id);
   }
-  send(taskId: unknown, text: unknown) {
+  send(taskId: unknown, text: unknown, yolo = false) {
     const run = this.run(taskId);
     if (typeof text !== 'string' || !text.trim()) throw new ApiError(400, 'text must be nonempty.');
     if (run.cleaned) throw new ApiError(409, 'The worktree was cleaned up; start a new run to continue.');
     if (run.status === 'running' || run.status === 'blocked') throw new ApiError(409, 'A turn is already in progress.');
     run.abort = new AbortController();
     run.status = 'running';
-    this.go(run, text.trim());
+    this.go(run, text.trim(), undefined, yolo);
     return this.get(run.taskId);
   }
   permission(taskId: unknown, id: unknown, allow: unknown) {
@@ -313,12 +314,13 @@ export class AgentRuns {
   }
   private push(run: Run, type: AgentEvent['type'], text: string, who: { role?: string; model?: string } = {}) { run.updatedAt = new Date().toISOString(); run.events.push({ seq: run.events.length + 1, type, text, at: run.updatedAt, ...(who.role ? { role: who.role } : {}), ...(who.model ? { model: who.model } : {}) }); this.save(run); }
   // `shown` is what the conversation displays for the user's turn when the prompt sent to the agent is a longer generated brief.
-  private go(run: Run, prompt: string, shown?: string) {
+  private go(run: Run, prompt: string, shown?: string, yolo = false) {
+    run.yolo = yolo;
     this.push(run, 'user', shown ?? prompt);
     void (async () => {
       try {
         for await (const message of this.turns[run.agent]({
-          prompt, cwd: run.workdir, readOnly: run.kind === 'chat', effort: this.efforts[run.agent], model: run.model, systemPrompt: run.agent === 'claude' && run.kind !== 'chat' ? loopRules : undefined, resume: run.sessionId, signal: run.abort.signal,
+          prompt, cwd: run.workdir, yolo, effort: this.efforts[run.agent], model: run.model, systemPrompt: run.agent === 'claude' && run.kind !== 'chat' ? loopRules : undefined, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             // A stop that arrives before the request exists (or while it waits) must never leave the run blocked.
             if (run.abort.signal.aborted) { resolve(false); return; }

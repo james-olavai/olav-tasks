@@ -289,28 +289,38 @@ button.dependency-node:hover { border-color:var(--primary); }
 .agent-check.green summary { color:var(--foreground); }
 .agent-check.red summary { color:var(--destructive); }
 .agent-check pre { max-height:240px; overflow:auto; font-size:11px; background:var(--muted); padding:8px; border-radius:6px; white-space:pre-wrap; }
-/* Right-hand chat dock: fixed, collapsible; the page makes room for it on wide screens and is overlaid on narrow ones. */
-.chat-tab { position:fixed; right:0; top:40%; z-index:30; writing-mode:vertical-rl; padding:12px 6px; border:1px solid var(--border); border-right:0; border-radius:8px 0 0 8px; background:var(--card); color:var(--foreground); cursor:pointer; }
-.chat-dock { position:fixed; top:0; right:0; bottom:0; width:400px; max-width:100vw; z-index:30; display:flex; flex-direction:column; background:var(--card); border-left:1px solid var(--border); box-shadow:-4px 0 16px rgba(15,23,42,.06); }
-@media (min-width: 1100px) { body.chat-open .workspace { margin-right:400px; } }
-.chat-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); }
+/* Layout: header on top, then the page and the optional chat dock side by side below it (the dock never covers the header). */
+.workspace { display:flex; flex-direction:column; height:100vh; }
+.workspace-body { flex:1; min-height:0; display:flex; position:relative; }
+.main-scroll { flex:1; min-width:0; overflow:auto; }
+.tab-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.chat-toggle { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--muted-foreground); cursor:pointer; }
+.chat-toggle.on { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); }
+.chat-dock { width:400px; flex:none; display:flex; flex-direction:column; min-height:0; background:var(--card); border-left:1px solid var(--border); }
+@media (max-width: 1099px) { .chat-dock { position:absolute; top:0; right:0; bottom:0; max-width:100%; z-index:20; box-shadow:-4px 0 16px rgba(15,23,42,.12); } }
+.chat-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border); }
 .chat-agents { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
 .chat-agents button { padding:3px 10px; background:transparent; color:inherit; cursor:pointer; font-size:12px; }
 .chat-agents button.on { background:var(--primary); color:var(--primary-foreground); }
 .chat-agents button:disabled:not(.on) { opacity:.45; cursor:default; }
-.chat-actions { margin-left:auto; display:inline-flex; gap:6px; }
+.chat-actions { display:inline-flex; gap:4px; }
+.icon-button { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:6px; background:transparent; color:var(--muted-foreground); cursor:pointer; }
+.icon-button:hover, .icon-button.on { background:var(--accent); color:var(--accent-foreground); }
 .chat-history { list-style:none; margin:0; padding:0; max-height:240px; overflow:auto; border-bottom:1px solid var(--border); }
 .chat-history button { display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; padding:8px 12px; background:transparent; color:inherit; cursor:pointer; }
 .chat-history button:hover, .chat-history button.on { background:var(--accent); }
 .chat-history small { color:var(--muted-foreground); }
 .chat-body { flex:1; min-height:0; overflow:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
-.chat-new { display:flex; flex-direction:column; gap:8px; font-size:13px; }
-.chat-new select { max-width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:inherit; }
 .chat-meta { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; }
+.yolo-badge { padding:1px 6px; border-radius:4px; background:var(--destructive); color:var(--destructive-foreground); font-size:10px; font-weight:600; }
 .chat-log { list-style:none; margin:0; padding:0; font-size:13px; }
 .chat-log li { padding:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .chat-log li.agent-user { background:var(--muted); border-radius:6px; padding:6px 8px; margin:4px 0; }
 .chat-log strong { color:var(--muted-foreground); font-weight:500; margin-right:6px; }
 .chat-input { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-top:1px solid var(--border); }
 .chat-input textarea { resize:vertical; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:inherit; font:inherit; font-size:13px; }
-.chat-input span { display:flex; justify-content:flex-end; gap:6px; }
+.chat-send { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.chat-send > span { display:inline-flex; gap:6px; }
+.yolo-option { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--muted-foreground); cursor:pointer; }
+.yolo-option.on { color:var(--destructive); }
+.yolo-option input:disabled { cursor:not-allowed; }
