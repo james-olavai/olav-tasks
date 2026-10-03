@@ -13,8 +13,11 @@ export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permis
 // activity: running = turn in flight, blocked = waiting on a permission decision, idle = turn done, awaiting next message.
 export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
-type Run = { taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted'] as const;
+// Token/cost totals for a run. cost_usd is absent when the agent does not report it (unknown, not zero).
+export type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
+type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
+type Run = { usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'usage'] as const;
 export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
@@ -22,13 +25,19 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, mo
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
-  yield* query({
+  // Claude reports the whole session's spend (including subagents) on each result; take the latest, do not sum.
+  const reported = (m: any): Reported => {
+    const models = Object.values<any>(m.modelUsage ?? {});
+    const sum = (key: string) => models.reduce((total, item) => total + (item[key] ?? 0), 0);
+    return { cost_usd: m.total_cost_usd, input: sum('inputTokens'), output: sum('outputTokens'), cache_read: sum('cacheReadInputTokens'), cache_write: sum('cacheCreationInputTokens'), cumulative: true };
+  };
+  for await (const message of query({
     prompt,
     options: {
       cwd, abortController, ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
-  });
+  })) yield message.type === 'result' ? { ...message, reported: reported(message) } : message;
 };
 
 // Codex SDK has no per-tool approval callback (it wraps non-interactive `codex exec`), so a Codex run never reaches `blocked`.
@@ -48,7 +57,7 @@ export const codexTurn: Turn = async function* ({ prompt, cwd, model, resume, si
       else if (item.type === 'command_execution') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: item.command, exit_code: item.exit_code } }] } };
       else if (item.type === 'file_change') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { changes: item.changes } }] } };
       else if (item.type === 'error') yield { type: 'assistant', message: { content: [{ type: 'text', text: `error: ${item.message}` }] } };
-    } else if (event.type === 'turn.completed') yield { type: 'result', result: 'ok' };
+    } else if (event.type === 'turn.completed') yield { type: 'result', result: 'ok', reported: { input: event.usage.input_tokens, output: event.usage.output_tokens, cache_read: event.usage.cached_input_tokens, cache_write: event.usage.cache_write_input_tokens, cumulative: false } satisfies Reported };
     else if (event.type === 'turn.failed') throw new Error(event.error.message);
     else if (event.type === 'error') throw new Error(event.message);
   }
@@ -81,10 +90,10 @@ export class AgentRuns {
       } catch { /* ignore unreadable run file */ }
     }
   }
-  list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted }) => ({ taskId, agent, status, ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
+  list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage }) => ({ taskId, agent, status, ...(usage ? { usage } : {}), ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
   async ready() {
@@ -191,6 +200,13 @@ export class AgentRuns {
     if (!run) throw new ApiError(404, 'No run for this task.');
     return run;
   }
+  private record(run: Run, report: Reported) {
+    const before = run.usage ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, turns: 0 };
+    const { cumulative, ...numbers } = report;
+    run.usage = cumulative
+      ? { ...numbers, turns: before.turns + 1 }
+      : { ...(before.cost_usd !== undefined || numbers.cost_usd !== undefined ? { cost_usd: (before.cost_usd ?? 0) + (numbers.cost_usd ?? 0) } : {}), input: before.input + numbers.input, output: before.output + numbers.output, cache_read: before.cache_read + numbers.cache_read, cache_write: before.cache_write + numbers.cache_write, turns: before.turns + 1 };
+  }
   private push(run: Run, type: AgentEvent['type'], text: string) { run.events.push({ seq: run.events.length + 1, type, text, at: new Date().toISOString() }); this.save(run); }
   private go(run: Run, prompt: string) {
     this.push(run, 'user', prompt);
@@ -209,7 +225,12 @@ export class AgentRuns {
           if (message.type === 'assistant') for (const block of message.message?.content ?? []) {
             if (block.type === 'text' && block.text) this.push(run, 'text', block.text);
             else if (block.type === 'tool_use') this.push(run, 'tool', `${block.name} ${JSON.stringify(block.input).slice(0, 300)}`);
-          } else if (message.type === 'result') this.push(run, 'result', message.result ?? message.subtype ?? 'done');
+          } else if (message.type === 'result') {
+            if (message.reported) this.record(run, message.reported);
+            // Error results (budget, turn limit, execution error) are shown as errors; the run stays resumable by message.
+            if (typeof message.subtype === 'string' && message.subtype.startsWith('error')) this.push(run, 'error', message.subtype);
+            else this.push(run, 'result', message.result ?? message.subtype ?? 'done');
+          }
         }
         run.status = run.abort.signal.aborted ? 'stopped' : 'idle'; this.save(run);
       } catch (error) {

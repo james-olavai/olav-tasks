@@ -31,10 +31,10 @@ const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, resume, 
     const allowed = await canUseTool('Bash', { command: 'ls' });
     yield { type: 'assistant', message: { content: [{ type: 'text', text: allowed ? 'allowed' : 'denied' }] } };
   } else yield { type: 'assistant', message: { content: [{ type: 'text', text: `resumed ${resume}` }] } };
-  yield { type: 'result', result: 'ok' };
+  yield { type: 'result', result: 'ok', reported: { cost_usd: resume ? 0.8 : 0.5, input: 100, output: 10, cache_read: 50, cache_write: 5, cumulative: true } };
 };
 const codexRuns: string[] = [];
-const codexFake: Turn = async function* ({ prompt, cwd }) { codexRuns.push(cwd); yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } }; yield { type: 'result', result: 'ok' }; };
+const codexFake: Turn = async function* ({ prompt, cwd }) { codexRuns.push(cwd); yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } }; yield { type: 'result', result: 'ok', reported: { input: 7, output: 3, cache_read: 2, cache_write: 0, cumulative: false } }; };
 let port = 4900 + Math.floor(Math.random() * 90);
 let server = await startServer({ root, name: 't', version: '0', port }, { turns: { claude: turn, codex: codexFake } });
 let base = `http://127.0.0.1:${port}`;
@@ -67,7 +67,7 @@ await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 
 assert.ok((await call('/api/agent/run?task=T-1')).data.events.some((e: any) => e.text === 'allowed'));
 await call('/api/agent/send', { task: 'T-1', text: 'more' });
 await until(async () => (await call('/api/agent/run?task=T-1&since=3')).data.events.some((e: any) => e.text === 'resumed s1'));
-assert.deepEqual((await call('/api/agent/runs')).data.runs, [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
+assert.deepEqual((await call('/api/agent/runs')).data.runs.map(({ usage, ...rest }: any) => rest), [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
 // worktree isolation: agent wrote out.txt in its own worktree, not in the project root
 assert.notEqual(cwds[0], root);
 await assert.rejects(readFile(join(root, 'out.txt'), 'utf8'));
@@ -82,6 +82,9 @@ const restored = (await call('/api/agent/run?task=T-1')).data;
 assert.equal(restored.status, 'idle'); assert.ok(restored.events.length > 3);
 await call('/api/agent/send', { task: 'T-1', text: 'again' });
 await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'idle' && prompts.at(-1) === 'again');
+// usage: Claude totals are cumulative (latest wins, never summed); Codex has no cost, so cost stays unknown rather than 0
+const claudeUsage = (await call('/api/agent/run?task=T-1')).data.usage;
+assert.equal(claudeUsage.cost_usd, 0.8); assert.equal(claudeUsage.input, 100); assert.equal(claudeUsage.turns, 3);
 // accept: only a human action sets done
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/);
 assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, true);
@@ -97,7 +100,9 @@ await call('/api/agent/stop', { task: 'T-2' });
 assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'nope' })).status, 400);
 assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'codex' })).data.agent, 'codex');
 await until(async () => (await call('/api/agent/run?task=T-3')).data.status === 'idle');
-assert.equal(codexRuns.length, 1); assert.notEqual(codexRuns[0], root);
+assert.equal(codexRuns.length, 1);
+const codexUsage = (await call('/api/agent/run?task=T-3')).data.usage;
+assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined); assert.notEqual(codexRuns[0], root);
 assert.match(await readFile(join(root, 'T-3.md'), 'utf8'), /assignee: agent:codex/);
 assert.ok((await call('/api/agent/run?task=T-3')).data.events.some((e: any) => e.text.startsWith('codex did')));
 server.close();
