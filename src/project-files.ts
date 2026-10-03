@@ -139,7 +139,7 @@ export class ProjectFiles {
       if (counts.get(task.id)! > 1) { diagnostics.push({ path: task.path, message: `Duplicate task ID: ${task.id}` }); return false; }
       return true;
     });
-    return { tasks, diagnostics, revision: scan.revision };
+    return { tasks, diagnostics, truncated: scan.truncated, revision: scan.revision };
   }
   save(value: unknown, content: unknown, version: unknown) {
     return this.serial(async () => {

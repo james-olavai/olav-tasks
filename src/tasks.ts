@@ -3,7 +3,7 @@ import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 export type TaskStatus = 'todo' | 'in-progress' | 'done';
 export type TaskEffort = 'S' | 'M' | 'L';
 export type ModelProfile = 'fast' | 'balanced' | 'deep';
-export type Task = { path: string; id: string; title: string; status: TaskStatus; priority?: string; assignee?: string; effort?: TaskEffort; model_profile?: ModelProfile; check?: string; start_date?: string; end_date?: string; depends_on: string[]; version: string };
+export type Task = { path: string; id: string; title: string; status: TaskStatus; priority?: string; assignee?: string; effort?: TaskEffort; model_profile?: ModelProfile; check?: string; parent?: string; blocked_by?: string; start_date?: string; end_date?: string; depends_on: string[]; version: string };
 export function isTaskStatus(value: unknown): value is TaskStatus { return value === 'todo' || value === 'in-progress' || value === 'done'; }
 export function parseTask(content: string, path: string, version: string): { task: Task | null; statusRange?: [number, number]; quote?: string } {
   const opening = /^(?:\uFEFF)?---\r?\n/.exec(content);
@@ -34,6 +34,8 @@ export function parseTask(content: string, path: string, version: string): { tas
   if (model_profile !== undefined && !['fast', 'balanced', 'deep'].includes(model_profile)) throw new Error('model_profile must be fast, balanced, or deep.');
   const check = document.has('check') ? string('check') : undefined;
   if (check !== undefined && (check.length > 500 || /[\r\n]/.test(check))) throw new Error('check must be a single-line command of at most 500 characters.');
+  const parent = document.has('parent') ? string('parent') : undefined;
+  const blocked_by = document.has('blocked_by') ? string('blocked_by') : undefined;
   const day = (key: string) => {
     if (!document.has(key)) return undefined;
     const value = string(key);
@@ -54,7 +56,7 @@ export function parseTask(content: string, path: string, version: string): { tas
   const node = document.get('status', true);
   if (isScalar(node) && (node.type === 'BLOCK_LITERAL' || node.type === 'BLOCK_FOLDED')) throw new Error('status must use a plain or quoted scalar, not a YAML block.');
   if (!isScalar(node) || !node.range) throw new Error('status must have an editable scalar value.');
-  return { task: { path, id, title, status, ...(priority ? { priority } : {}), ...(assignee ? { assignee } : {}), ...(effort ? { effort: effort as TaskEffort } : {}), ...(model_profile ? { model_profile: model_profile as ModelProfile } : {}), ...(check ? { check } : {}), ...(start_date ? { start_date } : {}), ...(end_date ? { end_date } : {}), depends_on, version }, statusRange: [offset + node.range[0], offset + node.range[1]], quote: node.type };
+  return { task: { path, id, title, status, ...(priority ? { priority } : {}), ...(assignee ? { assignee } : {}), ...(effort ? { effort: effort as TaskEffort } : {}), ...(model_profile ? { model_profile: model_profile as ModelProfile } : {}), ...(check ? { check } : {}), ...(parent ? { parent } : {}), ...(blocked_by ? { blocked_by } : {}), ...(start_date ? { start_date } : {}), ...(end_date ? { end_date } : {}), depends_on, version }, statusRange: [offset + node.range[0], offset + node.range[1]], quote: node.type };
 }
 export function replaceTaskStatus(content: string, status: TaskStatus) {
   const parsed = parseTask(content, '', '');

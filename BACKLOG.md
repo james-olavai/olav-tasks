@@ -31,6 +31,7 @@
 | OT-015 | P1 | [精简项目规划 skill](backlog/tasks/OT-015.md) | OT-001 |
 | OT-016 | P1 | [显式绑定所有 IPv4 网卡](backlog/tasks/OT-016.md) | OT-011、OT-012 |
 | OT-017 | P1 | [任务负责人、工作量与 subagent 模型档位](backlog/tasks/OT-017.md) | OT-003、OT-006、OT-008、OT-015 |
+| OT-018 | P1 | [原生代理开发闭环与任务就绪查询](backlog/tasks/OT-018.md) | OT-017 |
 | OT-009 | P1 | [整理 Markdown skill](backlog/tasks/OT-009.md) | OT-003、OT-013 |
 | OT-010 | P1 | [skills 安装入口](backlog/tasks/OT-010.md) | OT-001、OT-008、OT-009、OT-013、OT-015 |
 | OT-011 | P1 | [npm 包安装与启动验收](backlog/tasks/OT-011.md) | OT-005、OT-006、OT-007、OT-010 |
