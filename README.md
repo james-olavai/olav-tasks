@@ -8,12 +8,12 @@ The first release includes Backlog, Kanban, Dependencies, Gantt, and Files views
 
 ## Features
 
-- View Markdown tasks in Backlog and Kanban, including dependencies and optional assignee, effort, and model profile metadata.
+- View Markdown tasks in Backlog and Kanban, including dependencies and optional assignee, effort, model profile, parent, and blocker metadata.
 - See missing dependencies, dependency cycles, and tasks without explicit schedule dates. Dates are never inferred.
 - Browse project files, preview Markdown and GFM, and create, move, rename, or delete Markdown files and folders.
 - Edit ordinary Markdown files with version conflict detection. Valid task files are read-only in the web interface; agents update task state in the Markdown source.
 - Search Markdown using `docs-kb`, with source paths, line numbers, filters, and bounded excerpts.
-- Install the bundled planning, writing, organization, and docs-kb skills into an explicitly selected agent skills directory.
+- Install the bundled planning, writing, organization, execution, and docs-kb skills into an explicitly selected agent skills directory.
 
 ## Requirements
 
@@ -51,7 +51,9 @@ When bound to `0.0.0.0`, open the app through the machine's network address. The
 
 ## Task files and project data
 
-Each task is a Markdown file with YAML frontmatter. The format supports `status`, `priority`, `depends_on`, and optional `assignee`, `effort`, and `model_profile` fields. See [Task file format](docs/task-format.md) for the full contract.
+Each task is a Markdown file with YAML frontmatter. The format supports `status`, `priority`, `depends_on`, and optional `assignee`, `effort`, `model_profile`, `parent`, and `blocked_by` fields. See [Task file format](docs/task-format.md) for the full contract.
+
+Read-only task snapshots are available with `olav-tasks tasks list /path/to/project --json` and `olav-tasks tasks ready /path/to/project --json`. The ready response contains `tasks`, `excluded`, `diagnostics`, `revision`, and `complete`; an incomplete scan or invalid graph returns no candidates. This is a snapshot, not a reservation or permission to execute.
 
 The web app reads and writes the selected local project directory. Agents maintain task status and dates in the source files; task cards and valid task documents are read-only in the browser. Ordinary Markdown files can be edited in the Files view. Before saving, the app checks whether the file changed externally and reports conflicts rather than silently overwriting newer content.
 
@@ -82,9 +84,10 @@ List available skills and install one into an explicit agent skills directory:
 node dist/cli.js skills list
 node dist/cli.js skills install docs-kb --dir /path/to/agent/skills
 node dist/cli.js skills install olav-tasks-plan --dir /path/to/agent/skills
+node dist/cli.js skills install olav-tasks-execute --dir /path/to/agent/skills
 ```
 
-The package includes `docs-kb`, `olav-tasks-plan`, `olav-tasks-write-markdown`, and `olav-tasks-organize-markdown`. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
+The package includes `docs-kb`, `olav-tasks-plan`, `olav-tasks-write-markdown`, `olav-tasks-organize-markdown`, and `olav-tasks-execute`. The execution skill coordinates native agents within an active session and follows project authorization; it does not start a background worker. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
 
 ```bash
 node dist/cli.js skills uninstall olav-tasks-plan --dir /path/to/agent/skills

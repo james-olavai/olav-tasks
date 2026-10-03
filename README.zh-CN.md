@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-2026-10-01：界面提供 Backlog、Kanban、Dependencies、Gantt、Files 五个图标页签。任务状态由 Agent 编辑 Markdown 维护，Kanban 和有效任务文件正文只读；普通 Markdown 可编辑保存。依赖图显示真实依赖、缺失任务及循环关系；Gantt 只展示明确填写有效 start_date 和 end_date 的任务，其他任务列为未排期，不推算日期。Backlog 表格和 Kanban 卡片展示可选的负责人、工作量与 subagent 模型档位；无负责人显示“未分配”，无工作量或档位显示“—”，窄屏表格支持横向滚动。
+2026-10-01：界面提供 Backlog、Kanban、Dependencies、Gantt、Files 五个图标页签。任务状态由 Agent 编辑 Markdown 维护，Kanban 和有效任务文件正文只读；普通 Markdown 可编辑保存。依赖图显示真实依赖、缺失任务及循环关系；Gantt 只展示明确填写有效 start_date 和 end_date 的任务，其他任务列为未排期，不推算日期。Backlog 表格和 Kanban 卡片展示可选的负责人、工作量、subagent 模型档位、父任务与阻塞说明；无负责人显示“未分配”，其他缺失字段显示“—”，窄屏表格支持横向滚动。
 
-本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理与 docs-kb 四个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)；本轮五视图由主 Agent 另行浏览器验收。npm 包尚未公开发布，包名尚未核实可用性。
+本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理、执行与 docs-kb 五个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)。npm 包尚未公开发布，包名尚未核实可用性。
 
 ## 本地开发与启动
 
@@ -45,6 +45,8 @@ node dist/cli.js /你的/项目目录 --host 0.0.0.0 --port 4328
 网页读取所选目录的真实任务和文件；任务状态与日期在源文件中由 Agent 维护，网页不提供任务状态或原文编辑。普通 Markdown 的文件写操作直接更新原文件；版本不一致返回冲突，不覆盖旧版本后的改动。依赖使用 package-lock.json 锁定，可用 `npm ci` 重现安装。
 
 任务可选字段 `assignee` 使用 `human:<稳定ID>` / `agent:<稳定ID>`（ID 非空、不含空白或冒号）；`effort` 使用 S/M/L 描述工作量；`model_profile` 使用 fast/balanced/deep 提示 subagent 模型档位。三项是只读元数据，格式或枚举无效时显示任务诊断；旧任务无需补值。规划与编写 skills 只按明确用户或项目依据设置负责人和工作量，只有需要 subagent 且项目有模型映射时才设置档位，更新时保留已有字段，不猜测。模型映射由项目 `AGENTS.md` 维护（本机 olav-os 使用其根文件），不由工作量推算；未设置档位和非 subagent 工作使用会话默认模型。完整契约见 [任务文件约定](docs/task-format.md)。
+
+可选 `parent` 是父任务 ID，`blocked_by` 是阻塞说明，均需非空。`olav-tasks tasks list /项目目录 --json` 列出只读快照；`olav-tasks tasks ready /项目目录 --json` 返回候选、排除项、诊断、revision 和 complete。扫描不完整或图无效时不返回候选。快照不占有任务，也不授权执行。
 
 当前文件操作只支持 `.md`；普通文件在树中可见，但不提供编辑或移动/删除。安全图片支持 PNG/JPEG/GIF/WebP/AVIF，不支持 SVG；Markdown 原始 HTML 不执行。文件树跳过隐藏项、node_modules、dist、build、coverage、references、archive、data，最多扫描 10,000 项、64 层，截断会提示。Markdown 单文件上限 8 MiB。
 
@@ -88,9 +90,10 @@ npm install /绝对路径/olav-tasks-0.1.0.tgz
 
 ```bash
 node dist/cli.js skills install olav-tasks-plan --dir /你的/Agent技能目录
+node dist/cli.js skills install olav-tasks-execute --dir /你的/Agent技能目录
 ```
 
-四个 skills 均随当前 npm 包分发，由客户端发现与加载，无需额外 skill 入口服务。规划 skill 完成静态核对；编写与整理 skills 已在隔离示例项目真实使用，保留了未开始和进行中的事实。
+五个 skills 均随当前 npm 包分发，由客户端发现与加载，无需额外 skill 入口服务。执行 skill 在活跃代理会话中按项目权限协调原生子代理和独立 QA，不启动后台调度。
 
 升级遇到已有不同内容时拒绝覆盖。卸载仅接受与当前包完整一致的目录；旧版本、用户修改或额外文件需自行审阅处理，不自动移除：
 

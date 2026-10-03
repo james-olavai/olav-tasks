@@ -8,7 +8,7 @@
 |---|---|
 | GET /api/project | 既有 `{name,root,version}` |
 | GET /api/tree | `{entries:[{path,type:"file"或"directory"}],truncated:boolean}`；相对路径扁平列表，包含普通文件，前端构建可展开目录 |
-| GET /api/tasks | `{tasks:[{path,id,title,status,priority?,depends_on:string[],version}],diagnostics:[{path,message}],revision:string}` |
+| GET /api/tasks | `{tasks:[{path,id,title,status,priority?,parent?,blocked_by?,depends_on:string[],version}],diagnostics:[{path,message}],truncated:boolean,revision:string}`；只读展示，不授予派工权限 |
 | GET /api/file?path=… | `{path,content,version}`；Markdown UTF-8，version 为原字节 SHA-256 |
 | POST /api/file | `{path,content,version:null或string}`；null 新建且禁止覆盖，string 保存且核对原版本；返回文件数据 |
 | PATCH /api/task | `{path,status,version}`；仅改 status，返回文件数据 |

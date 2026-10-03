@@ -5,6 +5,25 @@ import { parseArgs } from 'node:util';
 import { localIPv4Addresses, startServer } from './server.js';
 import { formatSearchResult, searchDocs } from './docs-kb.js';
 import { installSkill, listSkills, uninstallSkill } from './skills.js';
+import { ProjectFiles } from './project-files.js';
+import { taskReadiness } from './task-readiness.js';
+
+async function tasksCommand(args: string[]) {
+  const { values, positionals } = parseArgs({ args, options: { help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' } }, allowPositionals: true });
+  if (values.help) { console.log('Usage: olav-tasks tasks list <project-directory> [--json]\n       olav-tasks tasks ready <project-directory> [--json]\nRead-only snapshots; ready is not an execution reservation.'); return; }
+  if (positionals.length !== 2 || !['list', 'ready'].includes(positionals[0])) throw new Error('Use tasks list or tasks ready with one project directory.');
+  const root = await realpath(positionals[1]);
+  if (!(await stat(root)).isDirectory()) throw new Error('Project path must be a directory.');
+  const listing = await new ProjectFiles(root).tasks();
+  const result = positionals[0] === 'ready' ? taskReadiness(listing) : listing;
+  if (values.json) { console.log(JSON.stringify(result)); return; }
+  if (positionals[0] === 'ready') {
+    const ready = result as ReturnType<typeof taskReadiness>;
+    console.log(ready.complete ? ready.tasks.map(task => `${task.id}\t${task.path}\t${task.title}`).join('\n') || 'No ready tasks.' : 'Task scan or graph is incomplete; no tasks are ready.');
+  } else console.log(listing.tasks.map(task => `${task.id}\t${task.status}\t${task.path}\t${task.title}`).join('\n') || 'No tasks.');
+  if (result.diagnostics.length) console.error(result.diagnostics.map(item => `${item.path}: ${item.message}`).join('\n'));
+  if (listing.truncated) console.error('Task scan was truncated.');
+}
 
 async function docsCommand(args: string[]) {
   const { values, positionals } = parseArgs({ args, options: {
@@ -36,13 +55,14 @@ async function skillsCommand(args: string[]) {
 async function main() {
   if (process.argv[2] === 'docs') return docsCommand(process.argv.slice(3));
   if (process.argv[2] === 'skills') return skillsCommand(process.argv.slice(3));
+  if (process.argv[2] === 'tasks') return tasksCommand(process.argv.slice(3));
   const { values, positionals } = parseArgs({ options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
     port: { type: 'string', short: 'p' }, host: { type: 'string' },
   }, allowPositionals: true });
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   if (values.help) {
-    console.log('Olav Tasks\n\nUsage: olav-tasks <project-directory> [--port 4318] [--host 127.0.0.1|0.0.0.0]\n       olav-tasks docs search --help\n       olav-tasks skills --help\n\n  -h, --help     Show help\n  -v, --version  Show version\n  -p, --port     HTTP port (default 4318)\n      --host     Listen address: 127.0.0.1 or 0.0.0.0 (default 127.0.0.1)\n\nUse --host 0.0.0.0 to allow access through this machine’s IPv4 interfaces.');
+    console.log('Olav Tasks\n\nUsage: olav-tasks <project-directory> [--port 4318] [--host 127.0.0.1|0.0.0.0]\n       olav-tasks tasks --help\n       olav-tasks docs search --help\n       olav-tasks skills --help\n\n  -h, --help     Show help\n  -v, --version  Show version\n  -p, --port     HTTP port (default 4318)\n      --host     Listen address: 127.0.0.1 or 0.0.0.0 (default 127.0.0.1)\n\nUse --host 0.0.0.0 to allow access through this machine’s IPv4 interfaces.');
     return;
   }
   if (values.version) { console.log(pkg.version); return; }
