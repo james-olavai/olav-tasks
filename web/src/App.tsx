@@ -57,7 +57,6 @@ export function App() {
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [newPath, setNewPath] = useState('');
   const [movePath, setMovePath] = useState<string>();
-  const [lastSync, setLastSync] = useState('');
   const [chatOpen, setChatOpen] = useChatOpen();
   const current = useRef({ file, draft }); current.current = { file, draft };
   const busyRef = useRef(false);
@@ -74,7 +73,7 @@ export function App() {
     ]);
     if (id !== refreshId.current) return;
     setProject(nextProject); setBoard(nextBoard); setTree(nextTree);
-    revision.current = nextBoard.revision; setLastSync(new Date().toLocaleTimeString());
+    revision.current = nextBoard.revision;
   }, []);
   const retry = useCallback(async () => {
     setLoading(true); setSyncError('');
@@ -103,7 +102,7 @@ export function App() {
             } catch (e) { if (active && current.current.file?.path === previous.file.path) setExternal(`The current file may have been deleted or moved: ${(e as Error).message}. Your content is kept.`); }
           }
         }
-        if (active) { setSyncError(''); setLastSync(new Date().toLocaleTimeString()); }
+        if (active) { setSyncError(''); }
       } catch (e) { if (active) setSyncError(`Auto-sync failed: ${(e as Error).message}`); }
       finally { checking = false; }
     }, 2000);
@@ -153,14 +152,13 @@ export function App() {
     },
     img: ({ src, alt }) => { const path = typeof src === 'string' ? resolveLocal(file.path, src) : undefined; return path ? <img src={`/api/asset?path=${encodeURIComponent(path)}`} alt={alt ?? ''} loading="lazy" /> : <span className="muted">[Image not loaded: only project-relative image paths are supported] {alt}</span>; },
   }}>{bodyOnly(draft)}</ReactMarkdown> : null;
-  return <div className="workspace">
-    <header className="app-header"><span className="brand"><span className="brand-mark" aria-hidden="true">O</span>Olav Tasks</span><span className="project-name" title={project?.root}>{project?.name ?? 'Project'}</span><span className="sync-label" title={`Last sync ${lastSync || '—'}`}>{syncError ? 'Connection problem' : 'Local'}</span></header>
+  return <Tabs value={tab} onValueChange={value => { if (dirty && value !== tab && !window.confirm('Keep unsaved edits and switch view?')) return; setTab(value); }} className="workspace gap-0">
+    <header className="app-header"><span className="brand"><img className="brand-logo" src="/olav-logo.webp" alt="Olav" width="32" height="32"/>Olav Tasks</span><TabsList aria-label="Project views">{views.map(view => <TabsTrigger key={view.value} value={view.value} title={view.label} aria-label={view.label}><ViewIcon kind={view.value}/></TabsTrigger>)}</TabsList><ChatToggle open={chatOpen} onToggle={() => setChatOpen(!chatOpen)}/></header>
     <div className="workspace-body"><div className="main-scroll"><main className="main-content">
       {syncError && <div className="feedback error" role="alert">{syncError}<Button variant="outline" size="sm" onClick={() => void retry()} disabled={loading}>Reconnect</Button></div>}
       {error && <div className="feedback error" role="alert">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
       <div aria-live="polite">{notice && <div className="feedback">{notice}</div>}</div>
       {loading && <p role="status">Loading project…</p>}
-      <Tabs value={tab} onValueChange={value => { if (dirty && value !== tab && !window.confirm('Keep unsaved edits and switch view?')) return; setTab(value); }} className="view-tabs"><div className="tab-row"><TabsList aria-label="Project views">{views.map(view => <TabsTrigger key={view.value} value={view.value} title={view.label} aria-label={view.label}><ViewIcon kind={view.value}/></TabsTrigger>)}</TabsList><ChatToggle open={chatOpen} onToggle={() => setChatOpen(!chatOpen)}/></div>
         <TabsContent value="backlog">{!tasks.length ? <p className="empty-label">No tasks</p> : <div className="table-scroll"><table className="backlog-table"><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Effort</th><th>Model tier</th><th>Depends on</th><th>Dates</th></tr></thead><tbody>{tasks.map(task => <tr key={task.path}><td><button className="backlog-task" disabled={busy || opening} onClick={() => void open(task.path)}><span className="task-id">{task.id}</span>{task.title}</button></td><td><span className={`status-badge ${task.status}`}>{columns.find(column => column.status === task.status)?.label}</span></td><td>{task.priority ?? '—'}</td><td className="assignee-cell">{task.assignee ?? 'Unassigned'}</td><td>{task.effort ?? '—'}</td><td>{task.model_profile ?? '—'}</td><td className="dependencies-cell">{task.depends_on.join(', ') || '—'}</td><td className="date-cell">{task.start_date ?? '—'} / {task.end_date ?? '—'}</td></tr>)}</tbody></table></div>}</TabsContent>
         <TabsContent value="board">
           {!tasks.length && <p className="empty-label">No tasks</p>}
@@ -180,12 +178,11 @@ export function App() {
               {taskFile && (() => { const task = board?.tasks.find(item => item.path === file.path); return task ? <AgentPanel taskId={task.id}/> : null; })()}
             </> : <div className="document-empty"><h3>Select a Markdown file</h3></div>}</section></div>
         </TabsContent>
-      </Tabs>
       {!!board?.diagnostics.length && <details className="diagnostics"><summary>Task diagnostics ({board.diagnostics.length})</summary><ul>{board.diagnostics.map((item, index) => <li key={`${item.path}-${index}`}><button onClick={() => void open(item.path)}>{item.path}</button>: {item.message}</li>)}</ul></details>}
     </main></div>
     {chatOpen && <ChatDock onClose={() => setChatOpen(false)}/>}
     </div>
-  </div>;
+  </Tabs>;
 }
 
 const views = [{ value: 'backlog', label: 'Backlog' }, { value: 'board', label: 'Kanban' }, { value: 'dependencies', label: 'Dependencies' }, { value: 'gantt', label: 'Gantt' }, { value: 'files', label: 'Files' }];
