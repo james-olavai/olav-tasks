@@ -1,11 +1,13 @@
 ---
 name: olav-tasks-plan
-description: 将项目想法或需求收敛为实施范围、优先级、依赖和可验收任务。用户要求制定计划、拆分任务或整理 backlog 时使用。
+description: 将项目想法或需求收敛为范围、优先级、依赖和可验收任务。确定需求或拆分实施计划时使用；已明确内容落盘或整理既有资料使用对应写作、整理 skill。
 ---
 
 # 项目规划
 
 使用客户端现有文件工具完成规划，无需 Olav Tasks CLI、SDK 或其他 skill。
+
+本 skill 负责需求与实施计划的收敛。已明确范围和结论的落盘使用 `olav-tasks-write-markdown`；整理已有材料、索引或转换指定 backlog 使用 `olav-tasks-organize-markdown`，不借整理新增需求。
 
 ## 收敛范围
 
@@ -37,9 +39,11 @@ depends_on: []
 
 `model_profile` 可选，取 fast/balanced/deep，是 subagent 模型档位提示，不改变 assignee，也不由 effort 推算。只有需要派 subagent 且项目 `AGENTS.md` 有模型映射时才填写；派工先检查映射模型是否可用，未明确档位或非 subagent 工作沿用当前会话默认模型。
 
+项目采用父子任务或外部门治理扩展时，子任务写 `parent: <父任务ID>`；待用户决定或外部门写 `blocked_by: <阻塞说明>` 并在正文说明，解除后删除该字段。父任务须子任务全部 done 且父级验收通过才能 done。纯排序门写入 `depends_on` 时在正文注明。这些字段不是基础 CLI 展示契约；当前 CLI/API 摘要不展示 parent/blocked_by，调度 ready 工作须读任务 frontmatter 原文，核对依赖全部 done 且无 blocked_by，不能仅凭摘要判断。
+
 正文写目标、范围和验收条件；依赖填真实任务 ID，未决问题写在正文。普通方案文档无需任务字段。新项目无约定时可用 `backlog/tasks/` 存任务、`BACKLOG.md` 存相对链接索引。
 
-更新保留稳定 ID、已有状态、assignee、effort、model_profile、未知字段和无关正文；索引不重复维护任务状态。规划不代表开始执行或验收完成，不将任务改为 `in-progress` 或 `done`。任务状态由执行 Agent 根据真实进展维护；网页任务视图只读。既有其他任务格式保持原样，转成看板任务需包含在用户要求内。
+更新保留稳定 ID、已有状态、assignee、effort、model_profile、未知字段和无关正文；索引不重复维护任务状态。规划不代表开始执行或验收完成，不将任务改为 `in-progress` 或 `done`。状态 owner 与验收门遵项目规则；配合 loop-dev 时，执行者实际开始可记 in-progress，done 由协调者依据对最终成果的独立验收设置，执行者自述或子范围通过不足以关闭任务。网页任务视图只读。既有其他任务格式保持原样，转成看板任务需包含在用户要求内。
 
 不得擅自更换已有任务的负责人、工作量或模型档位；仅按用户明确要求或已确认项目依据修改，网页仍只读展示这些元数据。
 
