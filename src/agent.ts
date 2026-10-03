@@ -332,9 +332,12 @@ export class AgentRuns {
         try { await iterator?.return?.(undefined); } catch (error) { failure ??= error; }
         run.status = run.abort.signal.aborted ? 'stopped' : failure ? 'failed' : 'idle';
         if (!completed) this.markUsageGap(run);
-        if (failure && run.status === 'failed') {
+        const failureText = failure instanceof Error ? failure.message : String(failure);
+        const last = run.events.at(-1);
+        // An error result is already logged when it arrives; do not log the same line again when it is rethrown as the failure.
+        if (failure && run.status === 'failed' && !(last?.type === 'error' && last.text === failureText)) {
           const at = new Date().toISOString(); run.updatedAt = at;
-          run.events.push({ seq: run.events.length + 1, type: 'error', text: failure instanceof Error ? failure.message : String(failure), at });
+          run.events.push({ seq: run.events.length + 1, type: 'error', text: failureText, at });
         }
         try { this.save(run); } catch { if (!run.abort.signal.aborted && run.status !== 'stopped') run.status = 'failed'; }
       }

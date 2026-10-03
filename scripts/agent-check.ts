@@ -55,6 +55,7 @@ const seen: { prompt: string; cwd: string; yolo: boolean; effort?: string; syste
 const codexSeen: { cwd: string; yolo: boolean; effort?: string }[] = [];
 const turn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, resume, canUseTool }) {
   seen.push({ prompt, cwd, yolo: !!yolo, effort, systemPrompt, resume });
+  if (prompt === 'budget error') { yield { type: 'system', session_id: 's2' }; yield { type: 'result', subtype: 'error_max_budget_usd', reported: { cost_usd: 0.3, input: 5, output: 1, cache_read: 0, cache_write: 0, cumulative: true } }; return; }
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
     yield { type: 'assistant', message: { model: 'claude-main', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { subagent_type: 'explorer' } }] } };
@@ -154,6 +155,16 @@ for (let i = 0; i < 5; i++) {
   await call('/api/agent/stop', { task: racing.taskId });
   await until(async () => !['running', 'blocked'].includes((await run(racing.taskId)).status));
 }
+
+// an error result (budget, turn limit) fails the turn once: a single error line in the log, usage flagged incomplete, still continuable
+const budget = (await call('/api/agent/chat', { agent: 'claude', text: 'budget error' })).data;
+await until(async () => (await run(budget.taskId)).status === 'failed');
+const failedRun = await run(budget.taskId);
+assert.deepEqual(failedRun.events.filter((e: any) => e.type === 'error').map((e: any) => e.text), ['error_max_budget_usd']);
+assert.equal(failedRun.usageCoverage, 'partial');
+assert.equal((await call('/api/agent/send', { task: budget.taskId, text: 'continue' })).status, 200);
+await idle(budget.taskId);
+assert.equal((await run(budget.taskId)).usageCoverage, 'partial'); // a later success does not erase the gap
 
 // persistence: a fresh server restores the conversation and resumes it by session id
 const before = (await run(chat.taskId)).events.length;
