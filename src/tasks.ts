@@ -60,3 +60,17 @@ export function replaceTaskStatus(content: string, status: TaskStatus) {
   const replacement = parsed.quote === 'QUOTE_DOUBLE' ? JSON.stringify(status) : parsed.quote === 'QUOTE_SINGLE' ? `'${status}'` : status;
   return content.slice(0, parsed.statusRange[0]) + replacement + content.slice(parsed.statusRange[1]);
 }
+// Set one single-line scalar field (assignee, model_profile) in the frontmatter, keeping everything else byte-for-byte.
+export function setTaskField(content: string, key: 'assignee' | 'model_profile', value: string) {
+  if (!parseTask(content, '', '').task) throw new Error('File is not a valid Olav Tasks task.');
+  const opening = /^(?:﻿)?---\r?\n/.exec(content)!;
+  const rest = content.slice(opening[0].length);
+  const closing = /^(?:---|\.\.\.)[ \t]*\r?$/m.exec(rest)!;
+  const eol = opening[0].endsWith('\r\n') ? '\r\n' : '\n';
+  const front = rest.slice(0, closing.index);
+  const line = new RegExp(`^${key}:[^\\r\\n]*`, 'm');
+  const next = line.test(front) ? front.replace(line, `${key}: ${value}`) : `${front}${key}: ${value}${eol}`;
+  const result = opening[0] + next + rest.slice(closing.index);
+  if (!parseTask(result, '', '').task) throw new Error(`Invalid ${key}.`);
+  return result;
+}

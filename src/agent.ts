@@ -12,20 +12,20 @@ export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permis
 // activity: running = turn in flight, blocked = waiting on a permission decision, idle = turn done, awaiting next message.
 export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
-type Run = { taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'accepted'] as const;
-export type TurnOptions = { prompt: string; cwd: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
+type Run = { taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted'] as const;
+export type TurnOptions = { prompt: string; cwd: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
 // ponytail: Claude only; add a Codex/pi Turn with the same shape when a second agent is needed.
-export const claudeTurn: Turn = async function* ({ prompt, cwd, resume, signal, canUseTool }) {
+export const claudeTurn: Turn = async function* ({ prompt, cwd, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
   yield* query({
     prompt,
     options: {
-      cwd, abortController, ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
+      cwd, abortController, ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   });
@@ -34,6 +34,8 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, resume, signal, 
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
+  // Profile -> concrete model ID comes from the user: OLAV_TASKS_MODELS='{"fast":"…","balanced":"…","deep":"…"}'. No built-in model list.
+  private models: Record<string, string> = (() => { try { return JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { return {}; } })();
   constructor(private files: ProjectFiles, private root: string, private turn: Turn = claudeTurn) {
     this.state = join(dirname(root), '.olav-tasks-state', basename(root));
     const dir = join(this.state, 'runs');
@@ -50,7 +52,7 @@ export class AgentRuns {
   list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted }) => ({ taskId, agent, status, ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, agent: run.agent, status: run.status, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   async start(path: unknown) {
     if (typeof path !== 'string') throw new ApiError(400, 'path must be text.');
@@ -59,8 +61,11 @@ export class AgentRuns {
     if (!task) throw new ApiError(404, 'Task not found.');
     if (this.runs.get(task.id)?.status === 'running' || this.runs.get(task.id)?.status === 'blocked') throw new ApiError(409, 'This task already has an active run.');
     const body = (await this.files.read(path)).content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '');
-    if (task.status === 'todo') await this.files.updateStatus(path, 'in-progress', task.version).catch(() => undefined);
+    let version = task.version;
+    if (task.status === 'todo') version = (await this.files.updateStatus(path, 'in-progress', version).catch(() => undefined))?.version ?? version;
+    if (!task.assignee) await this.files.setMeta(path, 'assignee', 'agent:claude', version).catch(() => undefined);
     const run: Run = { taskId: task.id, path, agent: 'claude', status: 'running', events: [], workdir: this.root, abort: new AbortController() };
+    run.model = task.model_profile ? this.models[task.model_profile] : undefined;
     await this.isolate(run);
     this.runs.set(task.id, run);
     this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria. Do not mark the task done; a human reviews and sets status.`);
@@ -136,7 +141,7 @@ export class AgentRuns {
     void (async () => {
       try {
         for await (const message of this.turn({
-          prompt, cwd: run.workdir, resume: run.sessionId, signal: run.abort.signal,
+          prompt, cwd: run.workdir, model: run.model, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             const id = randomUUID();
             run.pending = { id, tool, resolve: allow => { run.pending = undefined; run.status = 'running'; resolve(allow); } };

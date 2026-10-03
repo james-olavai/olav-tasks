@@ -98,6 +98,10 @@ export async function startServer(project: Project, options: { turn?: Turn } = {
           if (pathname === '/api/file' && req.method === 'POST') { json(res, 200, await files.save(body.path, body.content, body.version)); return; }
           if (pathname === '/api/file' && req.method === 'DELETE') { json(res, 200, await files.remove(body.path, body.version)); return; }
           if (pathname === '/api/task' && req.method === 'PATCH') { json(res, 200, await files.updateStatus(body.path, body.status, body.version)); return; }
+          if (pathname === '/api/task-meta' && req.method === 'PATCH') {
+            if (body.field !== 'assignee' && body.field !== 'model_profile') throw new ApiError(400, 'field must be assignee or model_profile.');
+            json(res, 200, await files.setMeta(body.path, body.field, body.value, body.version)); return;
+          }
           if (pathname === '/api/directory' && req.method === 'POST') { json(res, 200, await files.directory(body.path)); return; }
           if (pathname === '/api/move' && req.method === 'POST') { json(res, 200, await files.move(body.path, body.to, body.version)); return; }
           throw new ApiError(405, 'Method not allowed for this endpoint.');

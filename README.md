@@ -59,6 +59,10 @@ The file browser supports `.md` file operations. Other files may be listed but c
 
 The app checks file metadata every two seconds for external changes; it is not a persistent file-watching service. Moving a Markdown file does not update links that refer to it. Writes use version checks and atomic replacement for normal edit conflicts, but there is no cross-process transaction lock.
 
+## Run an agent on a task (optional)
+
+On a task's detail page, "用 Claude 开始" starts a Claude Agent SDK session in its own git worktree (`agent/<task ID>`), under `<parent dir>/.olav-tasks-state/<project>/`. Permission requests are approved in the page; "验收通过" is the only action that sets a task to `done`, and merging the branch stays manual. It uses your existing Claude login and is available only when listening on `127.0.0.1`. Map the `model_profile` tiers to model IDs with `OLAV_TASKS_MODELS='{"fast":"…","balanced":"…","deep":"…"}'`; unset tiers use the default model. `npx tsx scripts/agent-check.ts` exercises the flow with a fake agent.
+
 ## Search project documentation
 
 After building, search Markdown files in an explicit project directory:

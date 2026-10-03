@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 
 type AgentEvent = { seq: number; type: string; text: string };
 type Diff = { branch: string; stat: string; patch: string; truncated: boolean };
-type Run = { branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
+type Run = { model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
 const labels: Record<string, string> = { running: '运行中', blocked: '等待批准', idle: '等待下一条指令', failed: '失败', stopped: '已停止' };
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/agent/${path}`, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -11,7 +11,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   if (!response.ok) throw new Error(data.error ?? `请求失败 (${response.status})`);
   return data as T;
 }
-export function AgentPanel({ taskId, path }: { taskId: string; path: string }) {
+export function AgentPanel({ taskId, path, version, profile }: { taskId: string; path: string; version: string; profile?: string }) {
   const [run, setRun] = useState<Run>();
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -32,9 +32,12 @@ export function AgentPanel({ taskId, path }: { taskId: string; path: string }) {
   }, [taskId]);
   const busy = run?.status === 'running' || run?.status === 'blocked';
   return <section className="agent-panel" aria-label="开发 Agent">
-    <h4>开发 Agent{run && <span className={`status-badge ${run.status}`}> {run.agent} · {labels[run.status]}{run.accepted ? ' · 已验收' : ''}</span>}{run?.branch && <code className="agent-branch"> {run.branch}</code>}</h4>
+    <h4>开发 Agent{run && <span className={`status-badge ${run.status}`}> {run.agent} · {labels[run.status]}{run.accepted ? ' · 已验收' : ''}</span>}{run?.branch && <code className="agent-branch"> {run.branch}{run.model ? ` · ${run.model}` : ''}</code>}</h4>
     {error && <div className="feedback error" role="alert">{error}</div>}
-    {!run && <Button size="sm" onClick={() => void act(() => call<Run>('start', { path }))}>用 Claude 开始</Button>}
+    {!run && <div className="agent-review"><label>模型档位 <select value={profile ?? ''} onChange={event => { if (event.target.value) void fetch('/api/task-meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, field: 'model_profile', value: event.target.value, version }) }).then(async response => { if (!response.ok) setError((await response.json()).error ?? '保存失败'); else setError(''); }); }}>
+        <option value="">默认</option><option value="fast">fast</option><option value="balanced">balanced</option><option value="deep">deep</option></select></label>
+      <Button size="sm" onClick={() => void act(() => call<Run>('start', { path }))}>用 Claude 开始</Button>
+      <span className="muted">档位对应的具体模型由环境变量 OLAV_TASKS_MODELS 配置，未配置则用默认模型。</span></div>}
     {run && <>
       <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.type}</strong> {event.text}</li>)}</ol>
       {run.pending && <div className="feedback warning" role="status">需要批准：{run.pending.tool}

@@ -8,6 +8,7 @@ import { startServer } from '../src/server.js';
 import type { Turn } from '../src/agent.js';
 
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
+process.env.OLAV_TASKS_MODELS = JSON.stringify({ deep: 'model-deep' });
 const root = join(parent, 'proj');
 execFileSync('mkdir', [root]);
 await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\n---\n\nDo the thing.\n');
@@ -15,8 +16,9 @@ const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', 
 git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'init');
 const prompts: string[] = [];
 const cwds: string[] = [];
-const turn: Turn = async function* ({ prompt, cwd, resume, canUseTool }) {
-  prompts.push(prompt); cwds.push(cwd);
+const models: (string | undefined)[] = [];
+const turn: Turn = async function* ({ prompt, cwd, model, resume, canUseTool }) {
+  prompts.push(prompt); cwds.push(cwd); models.push(model);
   if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
@@ -28,13 +30,22 @@ const turn: Turn = async function* ({ prompt, cwd, resume, canUseTool }) {
 let port = 4900 + Math.floor(Math.random() * 90);
 let server = await startServer({ root, name: 't', version: '0', port }, { turn });
 let base = `http://127.0.0.1:${port}`;
-const call = async (path: string, body?: unknown) => {
-  const res = await fetch(base + path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
+const call = async (path: string, body?: unknown, method = 'POST') => {
+  const res = await fetch(base + path, body === undefined ? undefined : { method, headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
   return { status: res.status, data: await res.json() as any };
 };
 const until = async (fn: () => Promise<boolean>) => { for (let i = 0; i < 50; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 20)); } throw new Error('timeout'); };
 
+// meta edit: unknown fields and bad enums are rejected, good ones keep the rest of the file intact
+const version = async () => (await call('/api/tasks')).data.tasks[0].version;
+assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'status', value: 'done', version: await version() }, 'PATCH')).status, 400);
+assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'model_profile', value: 'huge', version: await version() }, 'PATCH')).status, 400);
+assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'model_profile', value: 'deep', version: await version() }, 'PATCH')).status, 200);
+assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /^---\nschema: olav.tasks\/v1\nid: T-1\ntitle: Demo\nstatus: todo\nmodel_profile: deep\n---\n\nDo the thing\.\n$/);
+git('add', '-A'); git('commit', '-qm', 'meta');
 assert.equal((await call('/api/agent/start', { path: 'T-1.md' })).status, 200);
+assert.equal(models[0], 'model-deep');
+assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /assignee: agent:claude/);
 assert.match(prompts[0], /Do the thing/);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/);
 await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'blocked');

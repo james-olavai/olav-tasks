@@ -2,7 +2,7 @@ import { constants, type Dirent } from 'node:fs';
 import { lstat, mkdir, open, opendir, realpath, rename, unlink, link } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { isTaskStatus, parseTask, replaceTaskStatus, type Task } from './tasks.js';
+import { isTaskStatus, parseTask, replaceTaskStatus, setTaskField, type Task } from './tasks.js';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 const excluded = new Set(['node_modules', 'dist', 'build', 'coverage', 'references', 'archive', 'data']);
@@ -175,6 +175,18 @@ export class ProjectFiles {
       const listed = await this.tasks();
       if (!listed.tasks.some(task => task.path === path)) throw new ApiError(400, 'Task is invalid, duplicated, or outside the bounded scan.');
       const content = replaceTaskStatus(utf8(original.body), status);
+      await this.replace(path, Buffer.from(content, 'utf8'), expected);
+      return this.read(path);
+    });
+  }
+  setMeta(value: unknown, field: 'assignee' | 'model_profile', text: unknown, version: unknown) {
+    return this.serial(async () => {
+      const path = validatePath(value); markdown(path);
+      if (typeof text !== 'string') throw new ApiError(400, `${field} must be text.`);
+      const expected = validVersion(version);
+      const original = await this.check(path, expected);
+      let content: string;
+      try { content = setTaskField(utf8(original.body), field, text); } catch (error) { throw new ApiError(400, error instanceof Error ? error.message : 'Invalid task field.'); }
       await this.replace(path, Buffer.from(content, 'utf8'), expected);
       return this.read(path);
     });
