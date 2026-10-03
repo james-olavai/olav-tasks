@@ -20,6 +20,7 @@ priority: P1
 assignee: agent:codex # 可选，仅有明确归属时设置
 effort: M # 可选，仅有工作量依据时设置
 model_profile: balanced # 可选，仅需 subagent 且项目有模型映射时设置
+check: npm test # 可选，一条单行命令，退出码 0 表示机器可判定的验收通过
 depends_on: []
 ---
 ```
@@ -28,9 +29,11 @@ depends_on: []
 
 `model_profile` 可选，取 fast/balanced/deep，是 subagent 模型档位提示，不改变 assignee，也不由 effort 推算。只有需要派 subagent 且项目 `AGENTS.md` 有模型映射时才填写；派工先检查映射模型是否可用，未明确档位或非 subagent 工作沿用当前会话默认模型。
 
+`check` 可选，单行 shell 命令（不超过 500 字符），由 Olav Tasks 服务端在任务的 worktree 里于每个 agent 回合后独立运行，退出码 0 为通过；它只是证据，不会改变任务状态。只有验收条件确实能用命令判定时才写（例如测试、类型检查、`test -f`），主观或需要人判断的条件不要写成 check，也不要写"没有报错就算通过"这类弱检查。命令来自任务文件，不由 agent 修改。
+
 正文写目标、范围与可观察的验收条件。priority 可省略或使用 P0/P1/P2；depends_on 可省略或填写真实任务 ID。目录由项目决定，无约定时可用 backlog/tasks/；索引使用相对链接，不重复维护状态。
 
-更新前读取现有文件；保留稳定 ID、assignee、effort、model_profile、未知字段、无关正文与有效引用。若读取后文件发生变化，重新读取并合并，不以旧内容覆盖。
+更新前读取现有文件；保留稳定 ID、assignee、effort、model_profile、check、未知字段、无关正文与有效引用。若读取后文件发生变化，重新读取并合并，不以旧内容覆盖。
 
 状态仅使用 todo、in-progress、done。只有实际开始执行才记 in-progress，只有验收依据满足条件才记 done，并在正文记录结果和限制；方案或代码存在不等于验收完成。任务状态由执行 Agent 根据真实进展维护，网页任务视图只读。既有其他任务格式保留原样，转换需属于用户要求。
 

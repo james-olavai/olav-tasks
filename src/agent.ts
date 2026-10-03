@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,15 +9,17 @@ import { ApiError, type ProjectFiles } from './project-files.js';
 const git = promisify(execFile);
 const run_git = (cwd: string, ...args: string[]) => git('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 }).then(result => result.stdout.trim());
 // One run per task. State lives outside the project (<parent>/.olav-tasks-state/<project>/) so it never pollutes the repo.
-export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permission' | 'result' | 'error'; text: string; at: string; role?: string; model?: string };
+export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permission' | 'result' | 'error' | 'check'; text: string; at: string; role?: string; model?: string };
 // activity: running = turn in flight, blocked = waiting on a permission decision, idle = turn done, awaiting next message.
 export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
 // Token/cost totals for a run. cost_usd is absent when the agent does not report it (unknown, not zero).
 export type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
 type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
-type Run = { spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage'] as const;
+// Result of the task's own check command, run by the server (not the agent) in the run's worktree.
+export type CheckResult = { command: string; ok: boolean; exit: number | null; timedOut: boolean; ms: number; output: string; at: string };
+type Run = { check?: CheckResult; spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage', 'check'] as const;
 export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
@@ -94,6 +96,27 @@ const loopRules = (() => {
   } catch { return undefined; }
 })();
 
+// Run a task's check command: `sh -c`, own process group so a timeout kills the whole tree, secrets stripped, output tail kept.
+// The command comes from the task file in the project root, never from the worktree copy the agent can edit.
+const secretEnv = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENROUTER_API_KEY'];
+function runCheck(command: string, cwd: string, signal: AbortSignal): Promise<CheckResult> {
+  const timeout = positive('OLAV_TASKS_CHECK_TIMEOUT_MS') ?? 120_000;
+  const env = { ...process.env }; for (const name of secretEnv) delete env[name];
+  const started = Date.now();
+  return new Promise(resolve => {
+    const child = spawn('sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; let timedOut = false;
+    const take = (chunk: Buffer) => { output = (output + chunk.toString('utf8')).slice(-8000); };
+    child.stdout.on('data', take); child.stderr.on('data', take);
+    const kill = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ } };
+    const timer = setTimeout(() => { timedOut = true; kill(); }, timeout);
+    signal.addEventListener('abort', kill, { once: true });
+    const done = (exit: number | null) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolve({ command, ok: exit === 0 && !timedOut, exit, timedOut, ms: Date.now() - started, output, at: new Date().toISOString() }); };
+    child.on('error', error => { output += String(error); done(null); });
+    child.on('close', code => done(code));
+  });
+}
+
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
@@ -120,7 +143,7 @@ export class AgentRuns {
   list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage }) => ({ taskId, agent, status, ...(usage ? { usage } : {}), ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
   async ready() {
@@ -160,7 +183,7 @@ export class AgentRuns {
     run.model = task.model_profile ? this.models[agent]?.[task.model_profile] : undefined;
     await this.isolate(run);
     this.runs.set(task.id, run);
-    this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria. Do not mark the task done; a human reviews and sets status.`);
+    this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria.${task.check ? `\n\nCheck command (must exit 0; the server also runs it independently after your turn, in your worktree): ${task.check}` : ''} Do not mark the task done; a human reviews and sets status.`);
     return this.get(task.id);
   }
   send(taskId: unknown, text: unknown) {
@@ -183,6 +206,22 @@ export class AgentRuns {
     const run = this.run(taskId);
     run.abort.abort();
     run.pending?.resolve(false);
+    return this.get(run.taskId);
+  }
+  // Run the task's check now. The result is evidence for the human gate: it never changes task status by itself.
+  private async check(run: Run) {
+    const task = (await this.files.tasks()).tasks.find(item => item.id === run.taskId);
+    if (!task?.check) { run.check = undefined; return; }
+    run.check = await runCheck(task.check, run.workdir, run.abort.signal);
+    this.push(run, 'check', `${run.check.ok ? 'green' : run.check.timedOut ? 'red (timed out)' : `red (exit ${run.check.exit})`} · ${(run.check.ms / 1000).toFixed(1)}s · ${task.check}`);
+  }
+  async recheck(taskId: unknown) {
+    const run = this.run(taskId);
+    if (this.active(run.taskId)) throw new ApiError(409, 'A turn is in progress.');
+    if (run.cleaned) throw new ApiError(409, 'The worktree was cleaned up.');
+    run.abort = new AbortController();
+    await this.check(run);
+    this.save(run);
     return this.get(run.taskId);
   }
   // Each task gets its own worktree and branch off the current HEAD. Not a git repo: work in place (isolated=false).
@@ -283,6 +322,7 @@ export class AgentRuns {
             else this.push(run, 'result', message.result ?? message.subtype ?? 'done');
           }
         }
+        if (!run.abort.signal.aborted) await this.check(run).catch(error => this.push(run, 'error', `check could not run: ${error instanceof Error ? error.message : String(error)}`));
         run.status = run.abort.signal.aborted ? 'stopped' : 'idle'; this.save(run);
       } catch (error) {
         run.status = run.abort.signal.aborted ? 'stopped' : 'failed';

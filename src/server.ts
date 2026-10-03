@@ -97,6 +97,7 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi().permission(body.task, body.id, body.allow)); return; }
           if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi().accept(body.task)); return; }
           if (pathname === '/api/agent/cleanup' && req.method === 'POST') { json(res, 200, await agentApi().cleanup(body.task)); return; }
+          if (pathname === '/api/agent/recheck' && req.method === 'POST') { json(res, 200, await agentApi().recheck(body.task)); return; }
           if (pathname === '/api/agent/stop' && req.method === 'POST') { json(res, 200, agentApi().stop(body.task)); return; }
           if (pathname === '/api/file' && req.method === 'POST') { json(res, 200, await files.save(body.path, body.content, body.version)); return; }
           if (pathname === '/api/file' && req.method === 'DELETE') { json(res, 200, await files.remove(body.path, body.version)); return; }

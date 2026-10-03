@@ -15,14 +15,16 @@ process.env.OLAV_TASKS_SETTING_SOURCES = 'none'; assert.deepEqual(caps().setting
 for (const name of ['OLAV_TASKS_MAX_BUDGET_USD', 'OLAV_TASKS_MAX_TURNS', 'OLAV_TASKS_SETTING_SOURCES']) delete process.env[name];
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
 process.env.OLAV_TASKS_MAX_RUNS = '1';
+process.env.ANTHROPIC_API_KEY = 'secret-must-not-reach-checks';
 process.env.OLAV_TASKS_MODELS = JSON.stringify({ claude: { deep: 'model-deep' } });
 const root = join(parent, 'proj');
 execFileSync('mkdir', [root]);
-await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\n---\n\nDo the thing.\n');
+await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\ncheck: test -f out.txt && test -z "$ANTHROPIC_API_KEY"\n---\n\nDo the thing.\n');
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root });
 git('init', '-q');
 await writeFile(join(root, 'T-2.md'), '---\nschema: olav.tasks/v1\nid: T-2\ntitle: Second\nstatus: todo\ndepends_on: [T-1]\n---\n\nNeeds T-1.\n');
-await writeFile(join(root, 'T-3.md'), '---\nschema: olav.tasks/v1\nid: T-3\ntitle: Third\nstatus: todo\ndepends_on: [T-1]\n---\n\nAlso needs T-1.\n');
+await writeFile(join(root, 'T-3.md'), '---\nschema: olav.tasks/v1\nid: T-3\ntitle: Third\nstatus: todo\ncheck: test -f out.txt\ndepends_on: [T-1]\n---\n\nAlso needs T-1.\n');
+await writeFile(join(root, 'T-5.md'), '---\nschema: olav.tasks/v1\nid: T-5\ntitle: Slow check\nstatus: todo\ncheck: sleep 5\ndepends_on: [T-9]\n---\n\nSlow.\n');
 await writeFile(join(root, 'T-4.md'), '---\nschema: olav.tasks/v1\nid: T-4\ntitle: Fourth\nstatus: todo\ndepends_on: [T-9]\n---\n\nMissing dependency.\n');
 git('add', '-A'); git('commit', '-qm', 'init');
 const prompts: string[] = [];
@@ -59,7 +61,7 @@ const version = async () => (await call('/api/tasks')).data.tasks[0].version;
 assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'status', value: 'done', version: await version() }, 'PATCH')).status, 400);
 assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'model_profile', value: 'huge', version: await version() }, 'PATCH')).status, 400);
 assert.equal((await call('/api/task-meta', { path: 'T-1.md', field: 'model_profile', value: 'deep', version: await version() }, 'PATCH')).status, 200);
-assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /^---\nschema: olav.tasks\/v1\nid: T-1\ntitle: Demo\nstatus: todo\nmodel_profile: deep\n---\n\nDo the thing\.\n$/);
+assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /^---\nschema: olav.tasks\/v1\nid: T-1\ntitle: Demo\nstatus: todo\ncheck: test -f out.txt && test -z "\$ANTHROPIC_API_KEY"\nmodel_profile: deep\n---\n\nDo the thing\.\n$/);
 git('add', '-A'); git('commit', '-qm', 'meta');
 assert.equal((await call('/api/agent/start', { path: 'T-1.md' })).status, 200);
 assert.equal(models[0], 'model-deep');
@@ -75,8 +77,13 @@ assert.equal((await call('/api/agent/permission', { task: 'T-1', id: 'wrong', al
 await call('/api/agent/permission', { task: 'T-1', id: blocked.pending.id, allow: true });
 await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'idle');
 assert.ok((await call('/api/agent/run?task=T-1')).data.events.some((e: any) => e.text === 'allowed'));
+// executable check: run by the server after the turn, in the worktree, with API keys stripped; green here
+const green = (await call('/api/agent/run?task=T-1')).data.check;
+assert.equal(green.ok, true); assert.equal(green.exit, 0);
+assert.ok((await call('/api/agent/run?task=T-1')).data.events.some((e: any) => e.type === 'check' && /^green/.test(e.text)));
 await call('/api/agent/send', { task: 'T-1', text: 'more' });
 await until(async () => (await call('/api/agent/run?task=T-1&since=3')).data.events.some((e: any) => e.text === 'resumed s1'));
+await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'idle');
 assert.deepEqual((await call('/api/agent/runs')).data.runs.map(({ usage, ...rest }: any) => rest), [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
 // worktree isolation: agent wrote out.txt in its own worktree, not in the project root
 assert.notEqual(cwds[0], root);
@@ -131,6 +138,16 @@ assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'nope' }))
 assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'codex' })).data.agent, 'codex');
 await until(async () => (await call('/api/agent/run?task=T-3')).data.status === 'idle');
 assert.equal(codexRuns.length, 1);
+const red = (await call('/api/agent/run?task=T-3')).data.check; // codex fake wrote no out.txt, so the check fails: evidence, not a status change
+assert.equal(red.ok, false); assert.equal(red.exit, 1);
+assert.equal((await call('/api/agent/recheck', { task: 'T-3' })).data.check.ok, false);
+// timeout kills the whole process group and reports red
+process.env.OLAV_TASKS_CHECK_TIMEOUT_MS = '300';
+assert.equal((await call('/api/agent/start', { path: 'T-5.md', agent: 'codex' })).status, 200);
+await until(async () => (await call('/api/agent/run?task=T-5')).data.status === 'idle');
+const slow = (await call('/api/agent/run?task=T-5')).data.check;
+assert.equal(slow.ok, false); assert.equal(slow.timedOut, true); assert.ok(slow.ms < 3000);
+delete process.env.OLAV_TASKS_CHECK_TIMEOUT_MS;
 assert.equal((await call('/api/agent/cleanup', { task: 'T-3' })).status, 409); // not accepted yet
 const codexUsage = (await call('/api/agent/run?task=T-3')).data.usage;
 assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined); assert.notEqual(codexRuns[0], root);

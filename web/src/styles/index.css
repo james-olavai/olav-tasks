@@ -285,3 +285,7 @@ button.dependency-node:hover { border-color:var(--primary); }
 .agent-review { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
 .agent-branch { font-size:11px; color:var(--muted-foreground); }
 .agent-diff pre { max-height:360px; overflow:auto; font-size:11px; background:var(--muted); padding:8px; border-radius:6px; }
+.agent-check { margin-top:8px; font-size:12px; }
+.agent-check.green summary { color:var(--foreground); }
+.agent-check.red summary { color:var(--destructive); }
+.agent-check pre { max-height:240px; overflow:auto; font-size:11px; background:var(--muted); padding:8px; border-radius:6px; white-space:pre-wrap; }

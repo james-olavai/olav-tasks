@@ -34,6 +34,7 @@ depends_on: []
 | `assignee` | 可选，`human:<稳定ID>` / `agent:<稳定ID>`，例如 `human:alice`、`agent:codex`；ID 非空，不含空白或冒号，不关联成员目录或账号 |
 | `effort` | 可选，`S` / `M` / `L`，描述工作量，不表示难度或模型能力 |
 | `model_profile` | 可选，`fast` / `balanced` / `deep`，作为 subagent 派工的模型档位提示，不改变负责人 |
+| `check` | 可选，单行 shell 命令（至多 500 字符）；退出码 0 表示机器可判定的验收通过。Agent 面板在每个回合后于该任务的 worktree 里独立运行它，结果只是证据，不改变状态；命令只从项目根目录的任务文件读取，不读 worktree 里的副本 |
 | `depends_on` | 可选，任务 ID 数组；依赖图显示真实关系、缺失 ID 与循环，不自动调度 |
 | `start_date` | 可选，严格 `YYYY-MM-DD` 的有效日历日期 |
 | `end_date` | 可选，严格 `YYYY-MM-DD` 的有效日历日期；与开始日期同时存在时不得早于开始日期 |

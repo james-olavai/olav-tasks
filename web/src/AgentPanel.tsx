@@ -7,7 +7,8 @@ type Usage = { cost_usd?: number; input: number; output: number; cache_read: num
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 // Cost is a client-side estimate and absent when the agent does not report it.
 const usageText = (u: Usage) => `${u.cost_usd !== undefined ? `约 $${u.cost_usd.toFixed(2)} · ` : '费用未知 · '}输入 ${k(u.input)} · 输出 ${k(u.output)} · 缓存读 ${k(u.cache_read)} · ${u.turns} 回合`;
-type Run = { cleaned?: boolean; usage?: Usage | null; model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
+type Check = { command: string; ok: boolean; exit: number | null; timedOut: boolean; ms: number; output: string };
+type Run = { check?: Check | null; cleaned?: boolean; usage?: Usage | null; model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
 const labels: Record<string, string> = { running: '运行中', blocked: '等待批准', idle: '等待下一条指令', failed: '失败', stopped: '已停止' };
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/agent/${path}`, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -54,9 +55,11 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
         {busy && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('stop', { task: taskId }))}>停止</Button>}
         {(run.status === 'failed' || run.status === 'stopped') && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('start', { path, agent: run.agent }))}>重新开始</Button>}
       </form>
+      {run.check && <details className={`agent-check ${run.check.ok ? 'green' : 'red'}`} open={!run.check.ok}><summary>检查{run.check.ok ? '通过' : run.check.timedOut ? '失败（超时）' : `失败（退出码 ${run.check.exit}）`} · {(run.check.ms / 1000).toFixed(1)}s · <code>{run.check.command}</code></summary><pre>{run.check.output || '（无输出）'}</pre></details>}
       {!busy && <div className="agent-review">
+        {run.check !== undefined && run.isolated && !run.cleaned && <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('recheck', { task: taskId }))}>重新运行检查</Button>}
         {run.isolated && <Button size="sm" variant="outline" onClick={() => void call<Diff>(`diff?task=${encodeURIComponent(taskId)}`).then(next => { setDiff(next); setError(''); }, (cause: Error) => setError(cause.message))}>查看改动</Button>}
-        {!run.accepted && <Button size="sm" onClick={() => { if (window.confirm('确认已按验收条件检查，将任务标记为完成？分支不会被自动合并。')) void act(() => call<Run>('accept', { task: taskId })); }}>验收通过（设为完成）</Button>}
+        {!run.accepted && <Button size="sm" onClick={() => { if (window.confirm(run.check && !run.check.ok ? '自动检查未通过。仍要将任务标记为完成？分支不会被自动合并。' : '确认已按验收条件检查，将任务标记为完成？分支不会被自动合并。')) void act(() => call<Run>('accept', { task: taskId })); }}>验收通过（设为完成）</Button>}
         {run.accepted && run.isolated && !run.cleaned && <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('cleanup', { task: taskId }))}>提交到分支并清理 worktree</Button>}
         {run.cleaned && run.branch ? <span className="muted">已清理。合并由你手动执行：<code>git merge {run.branch}</code></span> : <span className="muted">不满意：直接在上方输入意见并发送，Agent 会继续修改。</span>}
       </div>}

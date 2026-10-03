@@ -7,7 +7,7 @@ import { AgentPanel, ReadyBar } from './AgentPanel';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Status = 'todo' | 'in-progress' | 'done';
-type Task = { path: string; id: string; title: string; status: Status; priority?: string; assignee?: string; effort?: 'S' | 'M' | 'L'; model_profile?: 'fast' | 'balanced' | 'deep'; start_date?: string; end_date?: string; depends_on: string[]; version: string };
+type Task = { path: string; id: string; title: string; status: Status; priority?: string; assignee?: string; effort?: 'S' | 'M' | 'L'; model_profile?: 'fast' | 'balanced' | 'deep'; check?: string; start_date?: string; end_date?: string; depends_on: string[]; version: string };
 type Entry = { path: string; type: 'file' | 'directory' };
 type File = { path: string; content: string; version: string; isTask?: boolean };
 type Board = { tasks: Task[]; diagnostics: { path: string; message: string }[]; revision: string };
