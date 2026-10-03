@@ -36,7 +36,7 @@ export const caps = () => {
 // Subagent roles the Claude coordinator may delegate to, each pinned to a tier, a reasoning effort and a tool allowlist.
 // OLAV_TASKS_ROLE_MODELS='{"explorer":"…",…}' / OLAV_TASKS_ROLE_EFFORT='{"explorer":"low",…}' override (defaults: haiku/sonnet/opus aliases, medium effort).
 // ponytail: reviewer gets Bash so it can run `git diff`/tests; every Bash call still goes through the human permission prompt.
-// researcher gets the web tools for loop-dev's prior-art step; they also go through the human prompt.
+// researcher gets the web tools for the prior-art check (is there an existing library or implementation?); they also go through the human prompt.
 const json = (name: string): Record<string, string> => { try { const value = JSON.parse(process.env[name] ?? '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
 export const roleAgents = () => {
   const models = json('OLAV_TASKS_ROLE_MODELS'); const efforts = json('OLAV_TASKS_ROLE_EFFORT');

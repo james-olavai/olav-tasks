@@ -1,3 +1,0 @@
-interface:
-  display_name: "Loop Dev"
-  short_description: "Bounded development loops with optional Jev decisions"
