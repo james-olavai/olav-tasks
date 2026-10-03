@@ -66,22 +66,3 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
       {diff && <details open className="agent-diff"><summary>{diff.stat || 'No changes'}</summary><pre>{diff.patch}{diff.truncated ? '\n… (truncated)' : ''}</pre></details>}</>}
   </section>;
 }
-
-// Shows tasks whose dependencies are all done; starting is an explicit click, capped server-side.
-export function ReadyBar({ onOpen }: { onOpen: (path: string) => void }) {
-  const [ready, setReady] = useState<{ id: string; path: string; title: string }[]>([]);
-  const [message, setMessage] = useState('');
-  useEffect(() => {
-    let live = true;
-    const poll = () => call<{ ready: typeof ready }>('ready').then(data => { if (live) setReady(data.ready); }, () => { if (live) setReady([]); });
-    void poll(); const timer = setInterval(() => void poll(), 3000);
-    return () => { live = false; clearInterval(timer); };
-  }, []);
-  if (!ready.length && !message) return null;
-  return <div className="feedback ready-bar" role="status">
-    {ready.length > 0 && <>Ready (all dependencies done): {ready.map(task => <button key={task.id} className="task-title" title={task.title} onClick={() => onOpen(task.path)}>{task.id}</button>)}
-      <Button size="sm" onClick={() => void call<{ started: string[]; skipped: { id: string; reason: string }[] }>('start-ready', {}).then(
-        result => setMessage(`Started: ${result.started.join(', ') || 'none'}${result.skipped.length ? `; skipped: ${result.skipped.map(item => `${item.id} (${item.reason})`).join(', ')}` : ''}`), (cause: Error) => setMessage(cause.message))}>Start ready tasks</Button></>}
-    {message && <span className="muted"> {message}</span>}
-  </div>;
-}

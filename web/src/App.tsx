@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { AgentPanel, ReadyBar } from './AgentPanel';
+import { AgentPanel } from './AgentPanel';
 import { ChatDock, ChatToggle, useChatOpen } from './ChatDock';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -164,7 +164,6 @@ export function App() {
         <TabsContent value="backlog">{!tasks.length ? <p className="empty-label">No tasks</p> : <div className="table-scroll"><table className="backlog-table"><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Effort</th><th>Model tier</th><th>Depends on</th><th>Dates</th></tr></thead><tbody>{tasks.map(task => <tr key={task.path}><td><button className="backlog-task" disabled={busy || opening} onClick={() => void open(task.path)}><span className="task-id">{task.id}</span>{task.title}</button></td><td><span className={`status-badge ${task.status}`}>{columns.find(column => column.status === task.status)?.label}</span></td><td>{task.priority ?? '—'}</td><td className="assignee-cell">{task.assignee ?? 'Unassigned'}</td><td>{task.effort ?? '—'}</td><td>{task.model_profile ?? '—'}</td><td className="dependencies-cell">{task.depends_on.join(', ') || '—'}</td><td className="date-cell">{task.start_date ?? '—'} / {task.end_date ?? '—'}</td></tr>)}</tbody></table></div>}</TabsContent>
         <TabsContent value="board">
           {!tasks.length && <p className="empty-label">No tasks</p>}
-          <ReadyBar onOpen={path => void open(path)}/>
           <div className="kanban">{columns.map(column => <section className="kanban-column" key={column.status} aria-label={column.label}><h3>{column.label}<span>{tasks.filter(task => task.status === column.status).length}</span></h3>
             {tasks.filter(task => task.status === column.status).map(task => <Card className="task-card" key={task.path}><div className="task-meta"><span>{task.id}</span>{task.priority && <span className="priority">{task.priority}</span>}</div><button className="task-title" disabled={busy || opening} onClick={() => void open(task.path)}>{task.title}</button><dl className="task-collaboration"><div><dt>Assignee</dt><dd>{task.assignee ?? 'Unassigned'}</dd></div><div><dt>Effort</dt><dd>{task.effort ?? '—'}</dd></div><div><dt>Model tier</dt><dd>{task.model_profile ?? '—'}</dd></div></dl>{task.depends_on.length > 0 && <p className="task-dependencies">Depends on: {task.depends_on.join(', ')}</p>}<p className="task-path">{task.path}</p></Card>)}
           </section>)}</div>
