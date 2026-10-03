@@ -36,8 +36,9 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
     {error && <div className="feedback error" role="alert">{error}</div>}
     {!run && <div className="agent-review"><label>模型档位 <select value={profile ?? ''} onChange={event => { if (event.target.value) void fetch('/api/task-meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, field: 'model_profile', value: event.target.value, version }) }).then(async response => { if (!response.ok) setError((await response.json()).error ?? '保存失败'); else setError(''); }); }}>
         <option value="">默认</option><option value="fast">fast</option><option value="balanced">balanced</option><option value="deep">deep</option></select></label>
-      <Button size="sm" onClick={() => void act(() => call<Run>('start', { path }))}>用 Claude 开始</Button>
-      <span className="muted">档位对应的具体模型由环境变量 OLAV_TASKS_MODELS 配置，未配置则用默认模型。</span></div>}
+      <Button size="sm" onClick={() => void act(() => call<Run>('start', { path, agent: 'claude' }))}>用 Claude 开始</Button>
+      <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('start', { path, agent: 'codex' }))}>用 Codex 开始</Button>
+      <span className="muted">Codex 无逐条批准：在只能写任务 worktree、禁网的沙箱内自动运行。档位对应的具体模型由 OLAV_TASKS_MODELS 配置，未配置则用默认模型。</span></div>}
     {run && <>
       <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.type}</strong> {event.text}</li>)}</ol>
       {run.pending && <div className="feedback warning" role="status">需要批准：{run.pending.tool}
@@ -47,7 +48,7 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
         <input value={text} onChange={event => setText(event.target.value)} disabled={busy} placeholder="给 Agent 的下一条指令" aria-label="给 Agent 的指令"/>
         <Button size="sm" type="submit" disabled={busy || !text.trim()}>发送</Button>
         {busy && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('stop', { task: taskId }))}>停止</Button>}
-        {(run.status === 'failed' || run.status === 'stopped') && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('start', { path }))}>重新开始</Button>}
+        {(run.status === 'failed' || run.status === 'stopped') && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('start', { path, agent: run.agent }))}>重新开始</Button>}
       </form>
       {!busy && <div className="agent-review">
         {run.isolated && <Button size="sm" variant="outline" onClick={() => void call<Diff>(`diff?task=${encodeURIComponent(taskId)}`).then(next => { setDiff(next); setError(''); }, (cause: Error) => setError(cause.message))}>查看改动</Button>}

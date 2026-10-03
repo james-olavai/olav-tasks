@@ -17,7 +17,6 @@ const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'work
 export type TurnOptions = { prompt: string; cwd: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
-// ponytail: Claude only; add a Codex/pi Turn with the same shape when a second agent is needed.
 export const claudeTurn: Turn = async function* ({ prompt, cwd, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
@@ -31,12 +30,36 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, model, resume, s
   });
 };
 
+// Codex SDK has no per-tool approval callback (it wraps non-interactive `codex exec`), so a Codex run never reaches `blocked`.
+// Its safety boundary is the sandbox instead: writes only inside the task worktree, no network, never asks.
+export const codexTurn: Turn = async function* ({ prompt, cwd, model, resume, signal }) {
+  const { Codex } = await import('@openai/codex-sdk');
+  const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, ...(model ? { model } : {}) } as const;
+  const codex = new Codex();
+  const thread = resume ? codex.resumeThread(resume, options) : codex.startThread(options);
+  const { events } = await thread.runStreamed(prompt, { signal });
+  // Normalize to the same message shape the Claude turn yields, so AgentRuns stays agent-agnostic.
+  for await (const event of events) {
+    if (event.type === 'thread.started') yield { session_id: event.thread_id };
+    else if (event.type === 'item.completed') {
+      const item = event.item;
+      if (item.type === 'agent_message') yield { type: 'assistant', message: { content: [{ type: 'text', text: item.text }] } };
+      else if (item.type === 'command_execution') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: item.command, exit_code: item.exit_code } }] } };
+      else if (item.type === 'file_change') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { changes: item.changes } }] } };
+      else if (item.type === 'error') yield { type: 'assistant', message: { content: [{ type: 'text', text: `error: ${item.message}` }] } };
+    } else if (event.type === 'turn.completed') yield { type: 'result', result: 'ok' };
+    else if (event.type === 'turn.failed') throw new Error(event.error.message);
+    else if (event.type === 'error') throw new Error(event.message);
+  }
+};
+export const defaultTurns: Record<string, Turn> = { claude: claudeTurn, codex: codexTurn };
+
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
-  // Profile -> concrete model ID comes from the user: OLAV_TASKS_MODELS='{"fast":"…","balanced":"…","deep":"…"}'. No built-in model list.
-  private models: Record<string, string> = (() => { try { return JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { return {}; } })();
-  constructor(private files: ProjectFiles, private root: string, private turn: Turn = claudeTurn) {
+  // Profile -> concrete model ID comes from the user: OLAV_TASKS_MODELS='{"claude":{"fast":"…","balanced":"…","deep":"…"},"codex":{…}}'. No built-in model list.
+  private models: Record<string, Record<string, string>> = (() => { try { return JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { return {}; } })();
+  constructor(private files: ProjectFiles, private root: string, private turns: Record<string, Turn> = defaultTurns) {
     this.state = join(dirname(root), '.olav-tasks-state', basename(root));
     const dir = join(this.state, 'runs');
     if (!existsSync(dir)) return;
@@ -59,7 +82,7 @@ export class AgentRuns {
     const { tasks } = await this.files.tasks();
     const done = new Set(tasks.filter(task => task.status === 'done').map(task => task.id));
     const known = new Set(tasks.map(task => task.id));
-    return tasks.filter(task => task.status === 'todo' && task.depends_on.every(id => known.has(id) && done.has(id)) && !this.active(task.id))
+    return tasks.filter(task => task.status === 'todo' && !task.assignee?.startsWith('human:') && task.depends_on.every(id => known.has(id) && done.has(id)) && !this.active(task.id))
       .sort((a, b) => (a.priority ?? 'P3').localeCompare(b.priority ?? 'P3') || a.id.localeCompare(b.id, 'en', { numeric: true }));
   }
   // ponytail: fixed cap so a click cannot fan out unbounded agents/cost; make it a setting if it needs tuning.
@@ -74,8 +97,9 @@ export class AgentRuns {
     return { started, skipped, max };
   }
   private active(taskId: string) { const status = this.runs.get(taskId)?.status; return status === 'running' || status === 'blocked'; }
-  async start(path: unknown) {
+  async start(path: unknown, requested?: unknown) {
     if (typeof path !== 'string') throw new ApiError(400, 'path must be text.');
+    if (requested !== undefined && (typeof requested !== 'string' || !this.turns[requested])) throw new ApiError(400, `agent must be one of: ${Object.keys(this.turns).join(', ')}.`);
     const board = await this.files.tasks();
     const task = board.tasks.find(item => item.path === path);
     if (!task) throw new ApiError(404, 'Task not found.');
@@ -83,9 +107,12 @@ export class AgentRuns {
     const body = (await this.files.read(path)).content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '');
     let version = task.version;
     if (task.status === 'todo') version = (await this.files.updateStatus(path, 'in-progress', version).catch(() => undefined))?.version ?? version;
-    if (!task.assignee) await this.files.setMeta(path, 'assignee', 'agent:claude', version).catch(() => undefined);
-    const run: Run = { taskId: task.id, path, agent: 'claude', status: 'running', events: [], workdir: this.root, abort: new AbortController() };
-    run.model = task.model_profile ? this.models[task.model_profile] : undefined;
+    // An explicit choice wins, then an `agent:<id>` assignee, then claude. A human assignee is never overwritten.
+    const assigned = task.assignee?.startsWith('agent:') ? task.assignee.slice(6) : undefined;
+    const agent = (requested as string | undefined) ?? (assigned && this.turns[assigned] ? assigned : 'claude');
+    if (!task.assignee || (assigned && assigned !== agent)) await this.files.setMeta(path, 'assignee', `agent:${agent}`, version).catch(() => undefined);
+    const run: Run = { taskId: task.id, path, agent, status: 'running', events: [], workdir: this.root, abort: new AbortController() };
+    run.model = task.model_profile ? this.models[agent]?.[task.model_profile] : undefined;
     await this.isolate(run);
     this.runs.set(task.id, run);
     this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria. Do not mark the task done; a human reviews and sets status.`);
@@ -160,7 +187,7 @@ export class AgentRuns {
     this.push(run, 'user', prompt);
     void (async () => {
       try {
-        for await (const message of this.turn({
+        for await (const message of this.turns[run.agent]({
           prompt, cwd: run.workdir, model: run.model, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             const id = randomUUID();

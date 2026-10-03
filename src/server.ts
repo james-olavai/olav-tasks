@@ -40,7 +40,7 @@ async function requestBody(req: IncomingMessage) {
     return value as Record<string, unknown>;
   } catch { throw new ApiError(400, 'Request body must be a JSON object.'); }
 }
-export async function startServer(project: Project, options: { turn?: Turn } = {}) {
+export async function startServer(project: Project, options: { turns?: Record<string, Turn> } = {}) {
   const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'web');
   // tsx dev runs src/cli.ts; only that mode permits the Vite development origin.
   const development = fileURLToPath(import.meta.url).endsWith('.ts');
@@ -52,7 +52,7 @@ export async function startServer(project: Project, options: { turn?: Turn } = {
   const devAuthorities = ['127.0.0.1', 'localhost', '[::1]'].map(address => `${address}:${devPort}`);
   const files = new ProjectFiles(project.root);
   // Agents run code with the user's credentials: loopback only, never exposed on a LAN bind.
-  const agents = host === '127.0.0.1' ? new AgentRuns(files, project.root, options.turn) : undefined;
+  const agents = host === '127.0.0.1' ? new AgentRuns(files, project.root, options.turns) : undefined;
   const agentApi = () => { if (!agents) throw new ApiError(403, 'Agent runs are only available when listening on 127.0.0.1.'); return agents; };
   const server = createServer((req, res) => {
     void (async () => {
@@ -91,7 +91,7 @@ export async function startServer(project: Project, options: { turn?: Turn } = {
           if (!req.headers.origin) throw new ApiError(403, "Writes require this application's local Origin.");
           if (!['POST', 'PATCH', 'DELETE'].includes(req.method ?? '')) throw new ApiError(405, 'Method not allowed.');
           const body = await requestBody(req);
-          if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi().start(body.path)); return; }
+          if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi().start(body.path, body.agent)); return; }
           if (pathname === '/api/agent/start-ready' && req.method === 'POST') { json(res, 200, await agentApi().startReady(body.paths)); return; }
           if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi().send(body.task, body.text)); return; }
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi().permission(body.task, body.id, body.allow)); return; }

@@ -9,7 +9,7 @@ import type { Turn } from '../src/agent.js';
 
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
 process.env.OLAV_TASKS_MAX_RUNS = '1';
-process.env.OLAV_TASKS_MODELS = JSON.stringify({ deep: 'model-deep' });
+process.env.OLAV_TASKS_MODELS = JSON.stringify({ claude: { deep: 'model-deep' } });
 const root = join(parent, 'proj');
 execFileSync('mkdir', [root]);
 await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\n---\n\nDo the thing.\n');
@@ -32,8 +32,10 @@ const turn: Turn = async function* ({ prompt, cwd, model, resume, canUseTool }) 
   } else yield { type: 'assistant', message: { content: [{ type: 'text', text: `resumed ${resume}` }] } };
   yield { type: 'result', result: 'ok' };
 };
+const codexRuns: string[] = [];
+const codexFake: Turn = async function* ({ prompt, cwd }) { codexRuns.push(cwd); yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } }; yield { type: 'result', result: 'ok' }; };
 let port = 4900 + Math.floor(Math.random() * 90);
-let server = await startServer({ root, name: 't', version: '0', port }, { turn });
+let server = await startServer({ root, name: 't', version: '0', port }, { turns: { claude: turn, codex: codexFake } });
 let base = `http://127.0.0.1:${port}`;
 const call = async (path: string, body?: unknown, method = 'POST') => {
   const res = await fetch(base + path, body === undefined ? undefined : { method, headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
@@ -72,7 +74,7 @@ assert.match(diff.patch, /\+hello/);
 // persistence: a fresh server instance restores the run and can resume by sessionId
 server.close();
 port += 100; base = `http://127.0.0.1:${port}`;
-server = await startServer({ root, name: 't', version: '0', port }, { turn });
+server = await startServer({ root, name: 't', version: '0', port }, { turns: { claude: turn, codex: codexFake } });
 const restored = (await call('/api/agent/run?task=T-1')).data;
 assert.equal(restored.status, 'idle'); assert.ok(restored.events.length > 3);
 await call('/api/agent/send', { task: 'T-1', text: 'again' });
@@ -88,5 +90,12 @@ const batch = (await call('/api/agent/start-ready', {})).data;
 assert.deepEqual(batch.started, ['T-2']);
 assert.deepEqual(batch.skipped.map((item: any) => item.id), ['T-3']); // cap of 1 concurrent run
 await call('/api/agent/stop', { task: 'T-2' });
+// agent choice: unknown agents are rejected; an explicit choice sets the assignee and routes to that adapter
+assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'nope' })).status, 400);
+assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'codex' })).data.agent, 'codex');
+await until(async () => (await call('/api/agent/run?task=T-3')).data.status === 'idle');
+assert.equal(codexRuns.length, 1); assert.notEqual(codexRuns[0], root);
+assert.match(await readFile(join(root, 'T-3.md'), 'utf8'), /assignee: agent:codex/);
+assert.ok((await call('/api/agent/run?task=T-3')).data.events.some((e: any) => e.text.startsWith('codex did')));
 server.close();
 console.log('agent-check ok');
