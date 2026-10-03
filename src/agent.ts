@@ -3,7 +3,9 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { ApiError, type ProjectFiles } from './project-files.js';
+import { pmRules, projectBrief } from './pm-context.js';
 
 const git = promisify(execFile);
 const run_git = (cwd: string, ...args: string[]) => git('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 }).then(result => result.stdout.trim());
@@ -125,6 +127,14 @@ function runCheck(command: string, cwd: string, signal: AbortSignal): Promise<Ch
   });
 }
 
+// How an agent invokes this very CLI: the compiled file when present, otherwise the TypeScript source through tsx (development).
+const cliCommand = () => {
+  const compiled = fileURLToPath(new URL('./cli.js', import.meta.url));
+  return existsSync(compiled) ? `node ${JSON.stringify(compiled)}` : `node --import tsx ${JSON.stringify(fileURLToPath(new URL('./cli.ts', import.meta.url)))}`;
+};
+// Conversations start as the project manager: static rules as the Claude system prompt, project context in the first message. OLAV_TASKS_PM_CONTEXT=0 turns it off.
+const pmOn = () => process.env.OLAV_TASKS_PM_CONTEXT !== '0';
+
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
@@ -162,7 +172,7 @@ export class AgentRuns {
     const id = `chat-${randomUUID().slice(0, 8)}`;
     const run: Run = { taskId: id, path: '', kind: 'chat', title: text.trim().slice(0, 60), agent, status: 'running', events: [], workdir: this.root, ...(reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as string }), abort: new AbortController() };
     this.runs.set(id, run);
-    this.go(run, text.trim(), undefined, yolo);
+    this.go(run, text.trim(), undefined, yolo, true);
     return this.get(id);
   }
   send(taskId: unknown, text: unknown, yolo = false) {
@@ -278,7 +288,7 @@ export class AgentRuns {
   private markUsageGap(run: Run) { run.usageCoverage = run.usage ? 'partial' : 'unknown'; if (run.usage) run.usage.reasoning_coverage = typeof run.usage.reasoning_output === 'number' ? 'partial' : 'unknown'; }
   private push(run: Run, type: AgentEvent['type'], text: string, who: { role?: string; model?: string } = {}) { run.updatedAt = new Date().toISOString(); run.events.push({ seq: run.events.length + 1, type, text, at: run.updatedAt, ...(who.role ? { role: who.role } : {}), ...(who.model ? { model: who.model } : {}) }); this.save(run); }
   // `shown` is what the conversation displays for the user's turn when the prompt sent to the agent is a longer generated brief.
-  private go(run: Run, prompt: string, shown?: string, yolo = false) {
+  private go(run: Run, prompt: string, shown?: string, yolo = false, firstTurn = false) {
     run.yolo = yolo;
     try { this.push(run, 'user', shown ?? prompt); }
     catch { run.status = 'failed'; this.markUsageGap(run); return; }
@@ -287,8 +297,13 @@ export class AgentRuns {
       let failure: unknown;
       let iterator: AsyncIterator<any> | undefined;
       try {
+        let sent = prompt;
+        if (firstTurn && pmOn()) {
+          try { const brief = await projectBrief(this.root, this.files); sent = run.agent === 'claude' ? `${brief}\n\n${prompt}` : `${pmRules(cliCommand())}\n\n${brief}\n\n${prompt}`; }
+          catch { /* the brief is best effort; the conversation still starts */ }
+        }
         iterator = this.turns[run.agent]({
-          prompt, cwd: run.workdir, yolo, effort: run.reasoningEffort ?? this.efforts[run.agent], model: run.model, resume: run.sessionId, signal: run.abort.signal,
+          prompt: sent, systemPrompt: run.kind === 'chat' && run.agent === 'claude' && pmOn() ? pmRules(cliCommand()) : undefined, cwd: run.workdir, yolo, effort: run.reasoningEffort ?? this.efforts[run.agent], model: run.model, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             // A stop that arrives before the request exists (or while it waits) must never leave the run blocked.
             if (run.abort.signal.aborted) { resolve(false); return; }

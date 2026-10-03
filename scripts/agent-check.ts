@@ -34,6 +34,7 @@ process.env.OLAV_TASKS_AGENT_LAN = '0'; assert.ok(!agentAllowed('203.0.113.9'));
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
 const root = join(parent, 'proj'); await mkdir(root);
 await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\ncheck: test -f out.txt && test -z "$ANTHROPIC_API_KEY"\n---\n\nDo the thing.\n');
+await writeFile(join(root, 'PROJECT.md'), '# Garden\n\nGoal: tomatoes by June.\nDefinition of done: it is eaten.\n');
 await writeFile(join(root, 'T-2.md'), '---\nschema: olav.tasks/v1\nid: T-2\ntitle: Slow check\nstatus: todo\ncheck: sleep 5\n---\n\nSlow.\n');
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root });
 git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'init');
@@ -52,10 +53,10 @@ async function seed(id: string, file: string) {
 const worktree = await seed('T-1', 'T-1.md'); await seed('T-2', 'T-2.md');
 
 const seen: { prompt: string; cwd: string; yolo: boolean; effort?: string; systemPrompt?: string; resume?: string }[] = [];
-const codexSeen: { cwd: string; yolo: boolean; effort?: string }[] = [];
+const codexSeen: { cwd: string; yolo: boolean; effort?: string; prompt: string; systemPrompt?: string }[] = [];
 const turn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, resume, canUseTool }) {
   seen.push({ prompt, cwd, yolo: !!yolo, effort, systemPrompt, resume });
-  if (prompt === 'budget error') { yield { type: 'system', session_id: 's2' }; yield { type: 'result', subtype: 'error_max_budget_usd', reported: { cost_usd: 0.3, input: 5, output: 1, cache_read: 0, cache_write: 0, cumulative: true } }; return; }
+  if (prompt.endsWith('budget error')) { yield { type: 'system', session_id: 's2' }; yield { type: 'result', subtype: 'error_max_budget_usd', reported: { cost_usd: 0.3, input: 5, output: 1, cache_read: 0, cache_write: 0, cumulative: true } }; return; }
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
     yield { type: 'assistant', message: { model: 'claude-main', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { subagent_type: 'explorer' } }] } };
@@ -65,8 +66,8 @@ const turn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, r
   } else yield { type: 'assistant', message: { content: [{ type: 'text', text: `resumed ${resume}` }] } };
   yield { type: 'result', result: 'ok', reported: { cost_usd: resume ? 0.8 : 0.5, input: 100, output: 10, cache_read: 50, cache_write: 5, cumulative: true } };
 };
-const codexFake: Turn = async function* ({ prompt, cwd, yolo, effort }) {
-  codexSeen.push({ cwd, yolo: !!yolo, effort });
+const codexFake: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt }) {
+  codexSeen.push({ cwd, yolo: !!yolo, effort, prompt, systemPrompt });
   yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } };
   yield { type: 'result', result: 'ok', reported: { input: 7, output: 3, cache_read: 2, cache_write: 0, cumulative: false } };
 };
@@ -119,13 +120,19 @@ assert.match(chat.taskId, /^chat-/); assert.equal(chat.kind, 'chat'); assert.equ
 await until(async () => (await run(chat.taskId)).status === 'blocked');
 await call('/api/agent/permission', { task: chat.taskId, id: (await run(chat.taskId)).pending.id, allow: true });
 await idle(chat.taskId);
-assert.equal(seen.at(-1)!.cwd, root); assert.equal(seen.at(-1)!.systemPrompt, undefined); assert.equal(seen.at(-1)!.yolo, false); assert.equal(seen.at(-1)!.effort, 'high');
+assert.equal(seen.at(-1)!.cwd, root); assert.equal(seen.at(-1)!.yolo, false); assert.equal(seen.at(-1)!.effort, 'high');
+// the conversation starts as the project manager: rules as the system prompt, PROJECT.md and the board in the first message only
+const firstClaude = seen.at(-1)!;
+assert.match(firstClaude.systemPrompt ?? '', /project manager/); assert.match(firstClaude.systemPrompt ?? '', /tasks \.\.\./);
+assert.match(firstClaude.prompt, /<project-context>/); assert.match(firstClaude.prompt, /Goal: tomatoes by June/); assert.match(firstClaude.prompt, /Board: 2 tasks \(todo 1, in-progress 0, done 1\)/); assert.match(firstClaude.prompt, /Ready now:\n- T-2: Slow check/); // T-1 was accepted earlier in this script
+assert.ok(firstClaude.prompt.endsWith('what is in this repo?'));
 const events = (await run(chat.taskId)).events;
 assert.equal(events[0].type, 'user'); assert.equal(events[0].text, 'what is in this repo?'); // the log shows the user's words
 assert.ok(events.some((e: any) => e.role === 'explorer' && e.model === 'claude-haiku' && e.text.startsWith('Read'))); // subagent activity is attributed
 assert.ok(events.some((e: any) => !e.role && e.model === 'claude-main'));
 assert.equal((await call('/api/agent/send', { task: chat.taskId, text: 'more' })).status, 200);
 await until(async () => (await run(chat.taskId)).events.some((e: any) => e.text === 'resumed s1'));
+assert.equal(seen.at(-1)!.prompt, 'more'); assert.match(seen.at(-1)!.systemPrompt ?? '', /project manager/); // no context repeated on resume; the static rules stay
 await idle(chat.taskId);
 const usage = (await run(chat.taskId)).usage; // Claude totals are cumulative: the latest wins, never summed
 assert.equal(usage.cost_usd, 0.8); assert.equal(usage.input, 100); assert.equal(usage.turns, 2);
@@ -138,13 +145,21 @@ assert.equal((await call('/api/agent/chat', { agent: 'nope', text: 'x' })).statu
 // Codex conversation: default effort medium, usage is summed per turn and has no cost (unknown, not zero)
 const codex = (await call('/api/agent/chat', { agent: 'codex', text: 'hello codex' })).data;
 await idle(codex.taskId);
-assert.deepEqual(codexSeen.at(-1), { cwd: root, yolo: false, effort: 'medium' });
+assert.deepEqual({ cwd: codexSeen.at(-1)!.cwd, yolo: codexSeen.at(-1)!.yolo, effort: codexSeen.at(-1)!.effort }, { cwd: root, yolo: false, effort: 'medium' });
+// Codex has no system prompt: rules and context ride in the first message
+assert.equal(codexSeen.at(-1)!.systemPrompt, undefined); assert.match(codexSeen.at(-1)!.prompt, /project manager/); assert.match(codexSeen.at(-1)!.prompt, /Goal: tomatoes by June/);
+// OLAV_TASKS_PM_CONTEXT=0 starts a plain conversation
+process.env.OLAV_TASKS_PM_CONTEXT = '0';
+const plain = (await call('/api/agent/chat', { agent: 'claude', text: 'plain hello' })).data; await idle(plain.taskId).catch(() => undefined);
+await until(async () => seen.some(x => x.prompt === 'plain hello'));
+assert.equal(seen.find(x => x.prompt === 'plain hello')!.systemPrompt, undefined);
+delete process.env.OLAV_TASKS_PM_CONTEXT;
 const codexUsage = (await run(codex.taskId)).usage;
 assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined);
 
 // YOLO: accepted from the host machine, recorded for that turn, and follow-up turns default back to off
 const yolo = (await call('/api/agent/chat', { agent: 'claude', text: 'go fast', yolo: true })).data;
-assert.equal(yolo.yolo, true); assert.equal(seen.at(-1)!.yolo, true);
+assert.equal(yolo.yolo, true); await until(async () => seen.some(x => x.prompt.endsWith('go fast'))); assert.equal(seen.find(x => x.prompt.endsWith('go fast'))!.yolo, true);
 await idle(yolo.taskId);
 await call('/api/agent/send', { task: yolo.taskId, text: 'slower' }); await idle(yolo.taskId);
 assert.equal((await run(yolo.taskId)).yolo, false);
