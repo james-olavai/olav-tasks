@@ -7,7 +7,7 @@ type Usage = { cost_usd?: number; input: number; output: number; cache_read: num
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 // Cost is a client-side estimate and absent when the agent does not report it.
 const usageText = (u: Usage) => `${u.cost_usd !== undefined ? `约 $${u.cost_usd.toFixed(2)} · ` : '费用未知 · '}输入 ${k(u.input)} · 输出 ${k(u.output)} · 缓存读 ${k(u.cache_read)} · ${u.turns} 回合`;
-type Run = { usage?: Usage | null; model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
+type Run = { cleaned?: boolean; usage?: Usage | null; model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
 const labels: Record<string, string> = { running: '运行中', blocked: '等待批准', idle: '等待下一条指令', failed: '失败', stopped: '已停止' };
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/agent/${path}`, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -57,7 +57,8 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
       {!busy && <div className="agent-review">
         {run.isolated && <Button size="sm" variant="outline" onClick={() => void call<Diff>(`diff?task=${encodeURIComponent(taskId)}`).then(next => { setDiff(next); setError(''); }, (cause: Error) => setError(cause.message))}>查看改动</Button>}
         {!run.accepted && <Button size="sm" onClick={() => { if (window.confirm('确认已按验收条件检查，将任务标记为完成？分支不会被自动合并。')) void act(() => call<Run>('accept', { task: taskId })); }}>验收通过（设为完成）</Button>}
-        <span className="muted">不满意：直接在上方输入意见并发送，Agent 会继续修改。</span>
+        {run.accepted && run.isolated && !run.cleaned && <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('cleanup', { task: taskId }))}>提交到分支并清理 worktree</Button>}
+        {run.cleaned && run.branch ? <span className="muted">已清理。合并由你手动执行：<code>git merge {run.branch}</code></span> : <span className="muted">不满意：直接在上方输入意见并发送，Agent 会继续修改。</span>}
       </div>}
       {diff && <details open className="agent-diff"><summary>{diff.stat || '没有改动'}</summary><pre>{diff.patch}{diff.truncated ? '\n…（已截断）' : ''}</pre></details>}</>}
   </section>;

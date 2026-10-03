@@ -16,8 +16,8 @@ type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
 // Token/cost totals for a run. cost_usd is absent when the agent does not report it (unknown, not zero).
 export type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
 type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
-type Run = { usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'usage'] as const;
+type Run = { usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage'] as const;
 export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
@@ -107,7 +107,7 @@ export class AgentRuns {
   list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage }) => ({ taskId, agent, status, ...(usage ? { usage } : {}), ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
   async ready() {
@@ -153,6 +153,7 @@ export class AgentRuns {
   send(taskId: unknown, text: unknown) {
     const run = this.run(taskId);
     if (typeof text !== 'string' || !text.trim()) throw new ApiError(400, 'text must be nonempty.');
+    if (run.cleaned) throw new ApiError(409, 'The worktree was cleaned up; start a new run to continue.');
     if (run.status === 'running' || run.status === 'blocked') throw new ApiError(409, 'A turn is already in progress.');
     run.abort = new AbortController();
     run.status = 'running';
@@ -189,8 +190,10 @@ export class AgentRuns {
   async diff(taskId: unknown) {
     const run = this.run(taskId);
     if (!run.branch || !run.base) throw new ApiError(409, 'This run is not isolated in a worktree, so there is no branch diff.');
-    await run_git(run.workdir, 'add', '-N', '.');
-    const [stat, patch] = await Promise.all([run_git(run.workdir, 'diff', '--stat', run.base), run_git(run.workdir, 'diff', run.base)]);
+    // After cleanup the work lives only on the branch; compare against it. Before, include uncommitted and new files.
+    if (!run.cleaned) await run_git(run.workdir, 'add', '-N', '.');
+    const [cwd, target] = run.cleaned ? [this.root, [run.base, run.branch]] : [run.workdir, [run.base]];
+    const [stat, patch] = await Promise.all([run_git(cwd, 'diff', '--stat', ...target), run_git(cwd, 'diff', ...target)]);
     return { branch: run.branch, stat, patch: patch.slice(0, 200_000), truncated: patch.length > 200_000 };
   }
   // Accept = a human decided the work meets the acceptance criteria. Only this sets the task to done; merging the branch stays a manual step.
@@ -201,6 +204,21 @@ export class AgentRuns {
     if (!task) throw new ApiError(404, 'Task not found.');
     if (task.status !== 'done') await this.files.updateStatus(run.path, 'done', task.version);
     run.accepted = true; this.save(run);
+    return this.get(run.taskId);
+  }
+  // After acceptance: commit the worktree's work onto agent/<ID> and remove the worktree. The branch is kept; merging stays manual.
+  async cleanup(taskId: unknown) {
+    const run = this.run(taskId);
+    if (!run.branch || run.cleaned) throw new ApiError(409, 'Nothing to clean up.');
+    if (!run.accepted) throw new ApiError(409, 'Accept the work before cleaning up its worktree.');
+    if (this.active(run.taskId)) throw new ApiError(409, 'Stop or finish the current turn first.');
+    try {
+      await run_git(run.workdir, 'add', '-A');
+      const dirty = await run_git(run.workdir, 'status', '--porcelain');
+      if (dirty) await run_git(run.workdir, '-c', 'user.name=olav-tasks agent', '-c', 'user.email=agent@olav-tasks.local', 'commit', '-q', '-m', `${run.taskId}: agent work (${run.agent})`);
+      await run_git(this.root, 'worktree', 'remove', run.workdir);
+    } catch (error) { throw new ApiError(409, `Cleanup failed; the worktree was left in place: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`); }
+    run.cleaned = true; this.save(run);
     return this.get(run.taskId);
   }
   private save(run: Run) {

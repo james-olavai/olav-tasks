@@ -98,6 +98,14 @@ assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
 // default tier mapping for Claude when the user has not configured one for that tier
 assert.equal((await call('/api/task-meta', { path: 'T-2.md', field: 'model_profile', value: 'fast', version: (await call('/api/tasks')).data.tasks.find((t: any) => t.id === 'T-2').version }, 'PATCH')).status, 200);
+// cleanup: only after acceptance; the work survives on the branch, the worktree directory is gone, and the run cannot be resumed
+const worktree = cwds[0];
+assert.equal((await call('/api/agent/cleanup', { task: 'T-1' })).data.cleaned, true);
+await assert.rejects(readFile(join(worktree, 'out.txt'), 'utf8'));
+assert.equal(git('show', 'agent/T-1:out.txt').toString(), 'hello\n');
+assert.match((await call('/api/agent/diff?task=T-1')).data.patch, /\+hello/);
+assert.equal((await call('/api/agent/send', { task: 'T-1', text: 'x' })).status, 409);
+assert.equal((await call('/api/agent/cleanup', { task: 'T-1' })).status, 409); // already cleaned
 // dependency-aware dispatch: T-2/T-3 unlock once T-1 is done; T-4 depends on a missing task and never becomes ready
 assert.deepEqual((await call('/api/agent/ready')).data.ready.map((t: any) => t.id), ['T-2', 'T-3']);
 const batch = (await call('/api/agent/start-ready', {})).data;
@@ -111,6 +119,7 @@ assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'nope' }))
 assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'codex' })).data.agent, 'codex');
 await until(async () => (await call('/api/agent/run?task=T-3')).data.status === 'idle');
 assert.equal(codexRuns.length, 1);
+assert.equal((await call('/api/agent/cleanup', { task: 'T-3' })).status, 409); // not accepted yet
 const codexUsage = (await call('/api/agent/run?task=T-3')).data.usage;
 assert.equal(codexUsage.input, 7); assert.equal(codexUsage.cost_usd, undefined); assert.notEqual(codexRuns[0], root);
 assert.match(await readFile(join(root, 'T-3.md'), 'utf8'), /assignee: agent:codex/);
