@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.js';
-import { caps, type Turn } from '../src/agent.js';
+import { caps, roleAgents, type Turn } from '../src/agent.js';
 
 // hard caps and settings sources come from the environment; invalid values are ignored, unset means unlimited / SDK default
 assert.deepEqual(caps(), {});
@@ -33,6 +33,10 @@ const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, resume, 
   systems.push(systemPrompt); prompts.push(prompt); cwds.push(cwd); models.push(model);
   if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
+  if (!resume) {
+    yield { type: 'assistant', message: { model: 'claude-main', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { subagent_type: 'explorer' } }] } };
+    yield { type: 'assistant', parent_tool_use_id: 'tu1', message: { model: 'claude-haiku', content: [{ type: 'tool_use', id: 'tu2', name: 'Read', input: { file_path: 'x' } }] } };
+  }
   if (!resume) {
     const allowed = await canUseTool('Bash', { command: 'ls' });
     yield { type: 'assistant', message: { content: [{ type: 'text', text: allowed ? 'allowed' : 'denied' }] } };
@@ -96,6 +100,14 @@ assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/
 assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, true);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
+// subagent roles: pinned tiers and tools, overridable; events from a subagent are attributed to its role and model
+assert.deepEqual(Object.keys(roleAgents()), ['explorer', 'implementer', 'reviewer']);
+assert.equal(roleAgents().explorer.model, 'haiku'); assert.deepEqual(roleAgents().explorer.tools, ['Read', 'Grep', 'Glob']);
+process.env.OLAV_TASKS_ROLE_MODELS = '{"reviewer":"model-r"}'; assert.equal(roleAgents().reviewer.model, 'model-r'); assert.equal(roleAgents().implementer.model, 'sonnet'); delete process.env.OLAV_TASKS_ROLE_MODELS;
+const roleEvents = (await call('/api/agent/run?task=T-1')).data.events;
+assert.ok(roleEvents.some((e: any) => e.role === 'explorer' && e.model === 'claude-haiku' && e.text.startsWith('Read')));
+assert.ok(roleEvents.some((e: any) => !e.role && e.model === 'claude-main'));
+assert.match(systems[0] ?? '', /explorer/);
 // default tier mapping for Claude when the user has not configured one for that tier
 assert.equal((await call('/api/task-meta', { path: 'T-2.md', field: 'model_profile', value: 'fast', version: (await call('/api/tasks')).data.tasks.find((t: any) => t.id === 'T-2').version }, 'PATCH')).status, 200);
 // cleanup: only after acceptance; the work survives on the branch, the worktree directory is gone, and the run cannot be resumed

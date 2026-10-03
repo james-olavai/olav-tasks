@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
-type AgentEvent = { seq: number; type: string; text: string };
+type AgentEvent = { seq: number; type: string; text: string; role?: string; model?: string };
 type Diff = { branch: string; stat: string; patch: string; truncated: boolean };
 type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
@@ -44,7 +44,7 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
       <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('start', { path, agent: 'codex' }))}>用 Codex 开始</Button>
       <span className="muted">Codex 无逐条批准：在只能写任务 worktree、禁网的沙箱内自动运行。档位对应的具体模型由 OLAV_TASKS_MODELS 配置，未配置则用默认模型。</span></div>}
     {run && <>
-      <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.type}</strong> {event.text}</li>)}</ol>
+      <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.role ? `${event.role}${event.model ? ` · ${event.model}` : ''}` : event.type}</strong> {event.text}</li>)}</ol>
       {run.pending && <div className="feedback warning" role="status">需要批准：{run.pending.tool}
         <Button size="sm" onClick={() => void act(() => call<Run>('permission', { task: taskId, id: run.pending!.id, allow: true }))}>允许</Button>
         <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('permission', { task: taskId, id: run.pending!.id, allow: false }))}>拒绝</Button></div>}

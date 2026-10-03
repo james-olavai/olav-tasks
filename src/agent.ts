@@ -9,14 +9,14 @@ import { ApiError, type ProjectFiles } from './project-files.js';
 const git = promisify(execFile);
 const run_git = (cwd: string, ...args: string[]) => git('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 }).then(result => result.stdout.trim());
 // One run per task. State lives outside the project (<parent>/.olav-tasks-state/<project>/) so it never pollutes the repo.
-export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permission' | 'result' | 'error'; text: string; at: string };
+export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permission' | 'result' | 'error'; text: string; at: string; role?: string; model?: string };
 // activity: running = turn in flight, blocked = waiting on a permission decision, idle = turn done, awaiting next message.
 export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
 // Token/cost totals for a run. cost_usd is absent when the agent does not report it (unknown, not zero).
 export type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
 type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
-type Run = { usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
+type Run = { spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
 const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage'] as const;
 export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
@@ -29,6 +29,19 @@ export const caps = () => {
   const raw = process.env.OLAV_TASKS_SETTING_SOURCES?.trim();
   const sources = raw ? (raw === 'none' ? [] : raw.split(',').map(item => item.trim()).filter((item): item is 'user' | 'project' | 'local' => ['user', 'project', 'local'].includes(item))) : undefined;
   return { ...(budget ? { maxBudgetUsd: budget } : {}), ...(turns ? { maxTurns: turns } : {}), ...(sources ? { settingSources: sources } : {}) };
+};
+// Subagent roles the Claude coordinator may delegate to, each pinned to a tier and a tool allowlist. Models come from
+// OLAV_TASKS_ROLE_MODELS='{"explorer":"…","implementer":"…","reviewer":"…"}' (defaults: haiku/sonnet/opus aliases).
+// ponytail: reviewer gets Bash so it can run `git diff`/tests; every Bash call still goes through the human permission prompt.
+export const roleAgents = () => {
+  let custom: Record<string, string> = {};
+  try { custom = JSON.parse(process.env.OLAV_TASKS_ROLE_MODELS ?? '{}'); } catch { /* ignore malformed */ }
+  const model = (role: string, fallback: string) => (typeof custom[role] === 'string' && custom[role] ? custom[role] : fallback);
+  return {
+    explorer: { description: 'Read-only search of the repository. Use to locate code and evidence so the main agent does not read many files itself.', prompt: 'You search the repository and report concise findings with file paths and line numbers. Do not modify anything.', tools: ['Read', 'Grep', 'Glob'], model: model('explorer', 'haiku'), omitClaudeMd: true },
+    implementer: { description: 'Implements one well-specified work package with settled interfaces and disjoint files.', prompt: 'You implement exactly the package you are given, run the affected checks, and report what changed and the raw results.', model: model('implementer', 'sonnet') },
+    reviewer: { description: 'Independent read-only review of the actual diff and acceptance evidence. Never edits files.', prompt: 'You independently review the diff against the acceptance criteria. Do not edit files. Report failures with evidence, not opinions.', tools: ['Read', 'Grep', 'Glob', 'Bash'], model: model('reviewer', 'opus') },
+  };
 };
 export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -43,7 +56,7 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, mo
   for await (const message of query({
     prompt,
     options: {
-      cwd, abortController, ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
+      cwd, abortController, agents: roleAgents(), ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   })) yield message.type === 'result' ? { ...message, reported: reported(message) } : message;
@@ -77,7 +90,7 @@ export const defaultTurns: Record<string, Turn> = { claude: claudeTurn, codex: c
 const loopRules = (() => {
   try {
     const text = readFileSync(fileURLToPath(new URL('../skills/loop-dev/SKILL.md', import.meta.url)), 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
-    return `You are running inside Olav Tasks on one task, in its own git worktree. Follow this loop-dev skill as the coordinator, with these overrides: the repository's and the user's rules win; do not call the Jev scripts (no external routing is authorized); never edit the task file's status; when the acceptance checks pass or you are blocked, stop and report what changed, the evidence, and any blocker, because a human accepts the work.\n\n${text}`;
+    return `You are running inside Olav Tasks on one task, in its own git worktree. Follow this loop-dev skill as the coordinator, with these overrides: the repository's and the user's rules win; do not call the Jev scripts (no external routing is authorized); never edit the task file's status; you may delegate to the subagents explorer (read-only search), implementer (one work package) and reviewer (independent read-only review) only when the loop below says delegation pays; when the acceptance checks pass or you are blocked, stop and report what changed, the evidence, and any blocker, because a human accepts the work.\n\n${text}`;
   } catch { return undefined; }
 })();
 
@@ -239,7 +252,7 @@ export class AgentRuns {
       ? { ...numbers, turns: before.turns + 1 }
       : { ...(before.cost_usd !== undefined || numbers.cost_usd !== undefined ? { cost_usd: (before.cost_usd ?? 0) + (numbers.cost_usd ?? 0) } : {}), input: before.input + numbers.input, output: before.output + numbers.output, cache_read: before.cache_read + numbers.cache_read, cache_write: before.cache_write + numbers.cache_write, turns: before.turns + 1 };
   }
-  private push(run: Run, type: AgentEvent['type'], text: string) { run.events.push({ seq: run.events.length + 1, type, text, at: new Date().toISOString() }); this.save(run); }
+  private push(run: Run, type: AgentEvent['type'], text: string, who: { role?: string; model?: string } = {}) { run.events.push({ seq: run.events.length + 1, type, text, at: new Date().toISOString(), ...(who.role ? { role: who.role } : {}), ...(who.model ? { model: who.model } : {}) }); this.save(run); }
   private go(run: Run, prompt: string) {
     this.push(run, 'user', prompt);
     void (async () => {
@@ -255,8 +268,14 @@ export class AgentRuns {
         })) {
           if (message.session_id) run.sessionId = message.session_id;
           if (message.type === 'assistant') for (const block of message.message?.content ?? []) {
-            if (block.type === 'text' && block.text) this.push(run, 'text', block.text);
-            else if (block.type === 'tool_use') this.push(run, 'tool', `${block.name} ${JSON.stringify(block.input).slice(0, 300)}`);
+            // Subagent messages carry parent_tool_use_id; map it back to the role named when the main agent spawned it.
+            run.spawned ??= new Map();
+            const who = { role: message.parent_tool_use_id ? run.spawned.get(message.parent_tool_use_id) ?? 'subagent' : undefined, model: message.message?.model };
+            if (block.type === 'text' && block.text) this.push(run, 'text', block.text, who);
+            else if (block.type === 'tool_use') {
+              if ((block.name === 'Agent' || block.name === 'Task') && typeof block.input?.subagent_type === 'string') run.spawned.set(block.id, block.input.subagent_type);
+              this.push(run, 'tool', `${block.name} ${JSON.stringify(block.input).slice(0, 300)}`, who);
+            }
           } else if (message.type === 'result') {
             if (message.reported) this.record(run, message.reported);
             // Error results (budget, turn limit, execution error) are shown as errors; the run stays resumable by message.
