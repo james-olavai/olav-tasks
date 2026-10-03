@@ -5,8 +5,14 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.js';
-import type { Turn } from '../src/agent.js';
+import { caps, type Turn } from '../src/agent.js';
 
+// hard caps and settings sources come from the environment; invalid values are ignored, unset means unlimited / SDK default
+assert.deepEqual(caps(), {});
+process.env.OLAV_TASKS_MAX_BUDGET_USD = '1.5'; process.env.OLAV_TASKS_MAX_TURNS = 'abc'; process.env.OLAV_TASKS_SETTING_SOURCES = 'project,bogus';
+assert.deepEqual(caps(), { maxBudgetUsd: 1.5, settingSources: ['project'] });
+process.env.OLAV_TASKS_SETTING_SOURCES = 'none'; assert.deepEqual(caps().settingSources, []);
+for (const name of ['OLAV_TASKS_MAX_BUDGET_USD', 'OLAV_TASKS_MAX_TURNS', 'OLAV_TASKS_SETTING_SOURCES']) delete process.env[name];
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
 process.env.OLAV_TASKS_MAX_RUNS = '1';
 process.env.OLAV_TASKS_MODELS = JSON.stringify({ claude: { deep: 'model-deep' } });
@@ -90,10 +96,14 @@ assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/
 assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, true);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
+// default tier mapping for Claude when the user has not configured one for that tier
+assert.equal((await call('/api/task-meta', { path: 'T-2.md', field: 'model_profile', value: 'fast', version: (await call('/api/tasks')).data.tasks.find((t: any) => t.id === 'T-2').version }, 'PATCH')).status, 200);
 // dependency-aware dispatch: T-2/T-3 unlock once T-1 is done; T-4 depends on a missing task and never becomes ready
 assert.deepEqual((await call('/api/agent/ready')).data.ready.map((t: any) => t.id), ['T-2', 'T-3']);
 const batch = (await call('/api/agent/start-ready', {})).data;
 assert.deepEqual(batch.started, ['T-2']);
+await until(async () => models.length >= 4);
+assert.equal(models.at(-1), 'haiku');
 assert.deepEqual(batch.skipped.map((item: any) => item.id), ['T-3']); // cap of 1 concurrent run
 await call('/api/agent/stop', { task: 'T-2' });
 // agent choice: unknown agents are rejected; an explicit choice sets the assignee and routes to that adapter

@@ -21,6 +21,15 @@ const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'work
 export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
+// Optional hard limits from the environment; unset means no limit. OLAV_TASKS_MAX_BUDGET_USD / OLAV_TASKS_MAX_TURNS cap one turn.
+// OLAV_TASKS_SETTING_SOURCES=project (or user,project,local; none = isolated) limits which settings/CLAUDE.md the agent loads; unset = SDK default (all).
+const positive = (name: string) => { const value = Number(process.env[name]); return Number.isFinite(value) && value > 0 ? value : undefined; };
+export const caps = () => {
+  const budget = positive('OLAV_TASKS_MAX_BUDGET_USD'); const turns = positive('OLAV_TASKS_MAX_TURNS');
+  const raw = process.env.OLAV_TASKS_SETTING_SOURCES?.trim();
+  const sources = raw ? (raw === 'none' ? [] : raw.split(',').map(item => item.trim()).filter((item): item is 'user' | 'project' | 'local' => ['user', 'project', 'local'].includes(item))) : undefined;
+  return { ...(budget ? { maxBudgetUsd: budget } : {}), ...(turns ? { maxTurns: turns } : {}), ...(sources ? { settingSources: sources } : {}) };
+};
 export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
@@ -34,7 +43,7 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, mo
   for await (const message of query({
     prompt,
     options: {
-      cwd, abortController, ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
+      cwd, abortController, ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   })) yield message.type === 'result' ? { ...message, reported: reported(message) } : message;
@@ -75,8 +84,13 @@ const loopRules = (() => {
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
-  // Profile -> concrete model ID comes from the user: OLAV_TASKS_MODELS='{"claude":{"fast":"…","balanced":"…","deep":"…"},"codex":{…}}'. No built-in model list.
-  private models: Record<string, Record<string, string>> = (() => { try { return JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { return {}; } })();
+  // Profile -> model ID. Claude defaults to the Claude Code aliases haiku/sonnet/opus; override or add codex with
+  // OLAV_TASKS_MODELS='{"claude":{"fast":"…"},"codex":{"fast":"…"}}'. Codex has no default (model IDs are the user's). Only tasks with a model_profile are affected.
+  private models: Record<string, Record<string, string>> = (() => {
+    let custom: Record<string, Record<string, string>> = {};
+    try { custom = JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { /* ignore malformed */ }
+    return { ...custom, claude: { fast: 'haiku', balanced: 'sonnet', deep: 'opus', ...custom.claude } };
+  })();
   constructor(private files: ProjectFiles, private root: string, private turns: Record<string, Turn> = defaultTurns) {
     this.state = join(dirname(root), '.olav-tasks-state', basename(root));
     const dir = join(this.state, 'runs');
