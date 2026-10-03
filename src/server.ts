@@ -91,7 +91,6 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (pathname === '/api/tasks') { json(res, 200, await files.tasks()); return; }
           if (pathname === '/api/file') { json(res, 200, await files.read(path)); return; }
           if (pathname === '/api/agent/runs') { const allowed = agentAllowed(req.socket.remoteAddress); json(res, 200, { enabled: allowed, yolo: allowed && yoloAllowed(req.socket.remoteAddress), runs: allowed ? agents.list() : [] }); return; }
-          if (pathname === '/api/agent/ready') { json(res, 200, { ready: (await agentApi(req).ready()).map(task => ({ id: task.id, path: task.path, title: task.title })) }); return; }
           if (pathname === '/api/agent/run') { json(res, 200, agentApi(req).get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
           if (pathname === '/api/agent/diff') { json(res, 200, await agentApi(req).diff(url.searchParams.get('task'))); return; }
           if (pathname === '/api/revision') { json(res, 200, { revision: (await files.scan()).revision }); return; }
@@ -104,8 +103,6 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (!req.headers.origin) throw new ApiError(403, "Writes require this application's local Origin.");
           if (!['POST', 'PATCH', 'DELETE'].includes(req.method ?? '')) throw new ApiError(405, 'Method not allowed.');
           const body = await requestBody(req);
-          if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi(req).start(body.path, body.agent, body.message)); return; }
-          if (pathname === '/api/agent/start-ready' && req.method === 'POST') { json(res, 200, await agentApi(req).startReady(body.paths)); return; }
           if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text, yolo(req, body.yolo))); return; }
           if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi(req).send(body.task, body.text, yolo(req, body.yolo))); return; }
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi(req).permission(body.task, body.id, body.allow)); return; }

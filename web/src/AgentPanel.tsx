@@ -16,7 +16,8 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status})`);
   return data as T;
 }
-export function AgentPanel({ taskId, path, version, profile }: { taskId: string; path: string; version: string; profile?: string }) {
+// Review panel for a task run that already exists (runs can no longer be started from here; conversations start in the chat dock).
+export function AgentPanel({ taskId }: { taskId: string }) {
   const [run, setRun] = useState<Run>();
   const [text, setText] = useState('');
   const [error, setError] = useState('');
@@ -36,14 +37,10 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
     return () => { live = false; clearInterval(timer); };
   }, [taskId]);
   const busy = run?.status === 'running' || run?.status === 'blocked';
+  if (!run) return null;
   return <section className="agent-panel" aria-label="Agent">
     <h4>Agent{run && <span className={`status-badge ${run.status}`}> {run.agent} · {labels[run.status]}{run.accepted ? ' · accepted' : ''}</span>}{run?.usage && <span className="agent-branch" title="Cost is the SDK's local estimate, not a bill"> {usageText(run.usage)}</span>}{run?.branch && <code className="agent-branch"> {run.branch}{run.model ? ` · ${run.model}` : ''}</code>}</h4>
     {error && <div className="feedback error" role="alert">{error}</div>}
-    {!run && <div className="agent-review"><label>Model tier <select value={profile ?? ''} onChange={event => { if (event.target.value) void fetch('/api/task-meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, field: 'model_profile', value: event.target.value, version }) }).then(async response => { if (!response.ok) setError((await response.json()).error ?? 'Save failed'); else setError(''); }); }}>
-        <option value="">Default</option><option value="fast">fast</option><option value="balanced">balanced</option><option value="deep">deep</option></select></label>
-      <Button size="sm" onClick={() => void act(() => call<Run>('start', { path, agent: 'claude' }))}>Start with Claude</Button>
-      <Button size="sm" variant="outline" onClick={() => void act(() => call<Run>('start', { path, agent: 'codex' }))}>Start with Codex</Button>
-      <span className="muted">Codex has no per-tool approval: it runs unattended in a sandbox that can only write to the task worktree, with no network. Tier-to-model mapping comes from OLAV_TASKS_MODELS; unset tiers use the defaults.</span></div>}
     {run && <>
       <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.role ? `${event.role}${event.model ? ` · ${event.model}` : ''}` : event.type}</strong> {event.text}</li>)}</ol>
       {run.pending && <div className="feedback warning" role="status">Approval needed: {run.pending.tool}
@@ -53,7 +50,6 @@ export function AgentPanel({ taskId, path, version, profile }: { taskId: string;
         <input value={text} onChange={event => setText(event.target.value)} disabled={busy} placeholder="Next instruction for the agent" aria-label="Instruction for the agent"/>
         <Button size="sm" type="submit" disabled={busy || !text.trim()}>Send</Button>
         {busy && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('stop', { task: taskId }))}>Stop</Button>}
-        {(run.status === 'failed' || run.status === 'stopped') && <Button size="sm" variant="outline" type="button" onClick={() => void act(() => call<Run>('start', { path, agent: run.agent }))}>Restart</Button>}
       </form>
       {run.check && <details className={`agent-check ${run.check.ok ? 'green' : 'red'}`} open={!run.check.ok}><summary>Check {run.check.ok ? 'passed' : run.check.timedOut ? 'failed (timed out)' : `failed (exit ${run.check.exit})`} · {(run.check.ms / 1000).toFixed(1)}s · <code>{run.check.command}</code></summary><pre>{run.check.output || '(no output)'}</pre></details>}
       {!busy && <div className="agent-review">

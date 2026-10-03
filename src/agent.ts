@@ -3,7 +3,6 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
 import { ApiError, type ProjectFiles } from './project-files.js';
 
 const git = promisify(execFile);
@@ -94,14 +93,6 @@ export const codexTurn: Turn = async function* ({ prompt, cwd, yolo, effort, mod
 };
 export const defaultTurns: Record<string, Turn> = { claude: claudeTurn, codex: codexTurn };
 
-// The bundled loop-dev skill, read once, becomes the Claude coordinator's rules. ponytail: Claude only; the Codex SDK exposes no system prompt.
-const loopRules = (() => {
-  try {
-    const text = readFileSync(fileURLToPath(new URL('../skills/loop-dev/SKILL.md', import.meta.url)), 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
-    return `You are running inside Olav Tasks on one task, in its own git worktree. Follow this loop-dev skill as the coordinator, with these overrides: the repository's and the user's rules win; do not call the Jev scripts (no external routing is authorized); never edit the task file's status; you may delegate to the subagents explorer (read-only search), researcher (generic web/documentation lookup for the prior-art step; never put private code, credentials or internal names in a query), implementer (one work package) and reviewer (independent read-only review) only when the loop below says delegation pays; when the acceptance checks pass or you are blocked, stop and report what changed, the evidence, and any blocker, because a human accepts the work.\n\n${text}`;
-  } catch { return undefined; }
-})();
-
 // Run a task's check command: `sh -c`, own process group so a timeout kills the whole tree, secrets stripped, output tail kept.
 // The command comes from the task file in the project root, never from the worktree copy the agent can edit.
 const secretEnv = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENROUTER_API_KEY'];
@@ -126,14 +117,6 @@ function runCheck(command: string, cwd: string, signal: AbortSignal): Promise<Ch
 export class AgentRuns {
   private runs = new Map<string, Run>();
   private state: string;
-  // Profile -> model ID. Defaults: Claude aliases haiku/sonnet/opus, Codex gpt-6-luna/gpt-6.1-sol/gpt-6-astra; override per tier with
-  // OLAV_TASKS_MODELS='{"claude":{"fast":"…"},"codex":{"fast":"…"}}'. Only tasks with a model_profile are affected.
-  private models: Record<string, Record<string, string>> = (() => {
-    let custom: Record<string, Record<string, string>> = {};
-    try { custom = JSON.parse(process.env.OLAV_TASKS_MODELS ?? '{}'); } catch { /* ignore malformed */ }
-    // Codex slugs as listed by this machine's Codex model cache: luna = fast/cheap, sol = everyday workhorse, astra = frontier.
-    return { ...custom, claude: { fast: 'haiku', balanced: 'sonnet', deep: 'opus', ...custom.claude }, codex: { fast: 'gpt-6-luna', balanced: 'gpt-6.1-sol', deep: 'gpt-6-astra', ...custom.codex } };
-  })();
   // Main-agent reasoning effort per agent: OLAV_TASKS_EFFORT='{"claude":"high","codex":"high"}'. Claude unset = SDK default; Codex defaults to medium (Sol's own default is low).
   private efforts: Record<string, string> = { codex: 'medium', ...json('OLAV_TASKS_EFFORT') };
   constructor(private files: ProjectFiles, private root: string, private turns: Record<string, Turn> = defaultTurns) {
@@ -154,48 +137,7 @@ export class AgentRuns {
     const run = this.run(taskId);
     return { taskId, yolo: !!run.yolo, kind: run.kind ?? 'task', title: run.title ?? taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
-  // Ready = todo, every dependency exists and is done, no active run. Starting is always an explicit user action.
-  async ready() {
-    const { tasks } = await this.files.tasks();
-    const done = new Set(tasks.filter(task => task.status === 'done').map(task => task.id));
-    const known = new Set(tasks.map(task => task.id));
-    return tasks.filter(task => task.status === 'todo' && !task.assignee?.startsWith('human:') && task.depends_on.every(id => known.has(id) && done.has(id)) && !this.active(task.id))
-      .sort((a, b) => (a.priority ?? 'P3').localeCompare(b.priority ?? 'P3') || a.id.localeCompare(b.id, 'en', { numeric: true }));
-  }
-  // ponytail: fixed cap so a click cannot fan out unbounded agents/cost; make it a setting if it needs tuning.
-  async startReady(paths?: unknown) {
-    if (paths !== undefined && !(Array.isArray(paths) && paths.every(item => typeof item === 'string'))) throw new ApiError(400, 'paths must be a list of text.');
-    const max = Number(process.env.OLAV_TASKS_MAX_RUNS ?? 2) || 2;
-    const started: string[] = []; const skipped: { id: string; reason: string }[] = [];
-    for (const task of (await this.ready()).filter(item => !paths || paths.includes(item.path))) {
-      if ([...this.runs.values()].filter(run => run.status === 'running' || run.status === 'blocked').length >= max) { skipped.push({ id: task.id, reason: `已达并行上限 ${max}` }); continue; }
-      try { await this.start(task.path); started.push(task.id); } catch (error) { skipped.push({ id: task.id, reason: error instanceof Error ? error.message : String(error) }); }
-    }
-    return { started, skipped, max };
-  }
   private active(taskId: string) { const status = this.runs.get(taskId)?.status; return status === 'running' || status === 'blocked'; }
-  async start(path: unknown, requested?: unknown, message?: unknown) {
-    if (typeof path !== 'string') throw new ApiError(400, 'path must be text.');
-    if (message !== undefined && typeof message !== 'string') throw new ApiError(400, 'message must be text.');
-    if (requested !== undefined && (typeof requested !== 'string' || !this.turns[requested])) throw new ApiError(400, `agent must be one of: ${Object.keys(this.turns).join(', ')}.`);
-    const board = await this.files.tasks();
-    const task = board.tasks.find(item => item.path === path);
-    if (!task) throw new ApiError(404, 'Task not found.');
-    if (this.runs.get(task.id)?.status === 'running' || this.runs.get(task.id)?.status === 'blocked') throw new ApiError(409, 'This task already has an active run.');
-    const body = (await this.files.read(path)).content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '');
-    let version = task.version;
-    if (task.status === 'todo') version = (await this.files.updateStatus(path, 'in-progress', version).catch(() => undefined))?.version ?? version;
-    // An explicit choice wins, then an `agent:<id>` assignee, then claude. A human assignee is never overwritten.
-    const assigned = task.assignee?.startsWith('agent:') ? task.assignee.slice(6) : undefined;
-    const agent = (requested as string | undefined) ?? (assigned && this.turns[assigned] ? assigned : 'claude');
-    if (!task.assignee || (assigned && assigned !== agent)) await this.files.setMeta(path, 'assignee', `agent:${agent}`, version).catch(() => undefined);
-    const run: Run = { taskId: task.id, path, kind: 'task', title: `${task.id} ${task.title}`, agent, status: 'running', events: [], workdir: this.root, abort: new AbortController() };
-    run.model = task.model_profile ? this.models[agent]?.[task.model_profile] : undefined;
-    await this.isolate(run);
-    this.runs.set(task.id, run);
-    this.go(run, `Work on Olav Tasks task ${task.id}: ${task.title}\n\n${body}\n\nImplement it in this project and verify against the acceptance criteria.${task.check ? `\n\nCheck command (must exit 0; the server also runs it independently after your turn, in your worktree): ${task.check}` : ''} Do not mark the task done; a human reviews and sets status.${message?.trim() ? `\n\nInstruction from the user for this run: ${message.trim()}` : ''}`, `${message?.trim() ? `${message.trim()}\n` : ''}（任务 ${task.id}：${task.title}）`);
-    return this.get(task.id);
-  }
   // A free conversation: not tied to a task; the agent works in the project root like a normal terminal session.
   chat(requested: unknown, text: unknown, yolo = false) {
     const agent = typeof requested === 'string' && this.turns[requested] ? requested : undefined;
@@ -244,21 +186,6 @@ export class AgentRuns {
     await this.check(run);
     this.save(run);
     return this.get(run.taskId);
-  }
-  // Each task gets its own worktree and branch off the current HEAD. Not a git repo: work in place (isolated=false).
-  private async isolate(run: Run) {
-    try {
-      const safe = run.taskId.replace(/[^A-Za-z0-9._-]/g, '_');
-      const dir = join(this.state, 'worktrees', safe);
-      const branch = `agent/${safe}`;
-      if (!existsSync(dir)) {
-        mkdirSync(dirname(dir), { recursive: true });
-        const exists = await run_git(this.root, 'branch', '--list', branch);
-        await run_git(this.root, 'worktree', 'add', ...(exists ? [dir, branch] : ['-b', branch, dir]));
-      }
-      run.base = await run_git(this.root, 'merge-base', 'HEAD', branch).catch(() => run_git(this.root, 'rev-parse', 'HEAD'));
-      run.workdir = dir; run.branch = branch;
-    } catch { /* not a git repo or worktree unavailable */ }
   }
   async diff(taskId: unknown) {
     const run = this.run(taskId);
@@ -320,7 +247,7 @@ export class AgentRuns {
     void (async () => {
       try {
         for await (const message of this.turns[run.agent]({
-          prompt, cwd: run.workdir, yolo, effort: this.efforts[run.agent], model: run.model, systemPrompt: run.agent === 'claude' && run.kind !== 'chat' ? loopRules : undefined, resume: run.sessionId, signal: run.abort.signal,
+          prompt, cwd: run.workdir, yolo, effort: this.efforts[run.agent], resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             // A stop that arrives before the request exists (or while it waits) must never leave the run blocked.
             if (run.abort.signal.aborted) { resolve(false); return; }
