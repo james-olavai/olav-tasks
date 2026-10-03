@@ -54,7 +54,7 @@ git('add', '-A'); git('commit', '-qm', 'meta');
 assert.equal((await call('/api/agent/start', { path: 'T-1.md' })).status, 200);
 assert.equal(models[0], 'model-deep');
 await until(async () => systems.length > 0);
-assert.match(systems[0] ?? '', /Loop development/); assert.match(systems[0] ?? '', /never edit the task file's status/);
+assert.match(systems[0] ?? '', /Loop development/); assert.match(systems[0] ?? '', /never edit the task file's status/); assert.match(systems[0] ?? '', /prior art/i);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /assignee: agent:claude/);
 assert.match(prompts[0], /Do the thing/);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/);
