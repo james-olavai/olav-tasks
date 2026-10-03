@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AgentPanel } from './AgentPanel';
 import { ChatDock, ChatToggle, useChatOpen } from './ChatDock';
+import { ActivityView } from './ActivityView';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Status = 'todo' | 'in-progress' | 'done';
@@ -168,6 +169,7 @@ export function App() {
         </TabsContent>
         <TabsContent value="dependencies"><DependencyGraph tasks={tasks} onOpen={path => void open(path)} disabled={busy || opening}/></TabsContent>
         <TabsContent value="gantt"><Gantt tasks={tasks} onOpen={path => void open(path)} disabled={busy || opening}/></TabsContent>
+        <TabsContent value="activity"><ActivityView tasks={tasks}/></TabsContent>
         <TabsContent value="files"><div className="file-actions"><div className="toolbar"><Button variant="outline" disabled={busy} onClick={() => { setCreate('file'); setNewPath(''); }}>New Markdown</Button><Button variant="outline" disabled={busy} onClick={() => { setCreate('directory'); setNewPath(''); }}>New folder</Button></div></div>
           {create && <form className="operation-form" onSubmit={event => { event.preventDefault(); if (dirty && create === 'file' && !window.confirm('Creating and opening a file discards the current unsaved edits. Continue?')) return; void mutate(async () => { if (create === 'directory') await api('directory', { path: newPath }); else { const next = await api<File>('file', { path: newPath, content: '# New document\n', version: null }); setFile(next); setDraft(next.content); setEditing(true); setExternal(''); } setCreate(undefined); setNotice('Created'); }); }}><label>{create === 'file' ? 'New Markdown path (ends with .md)' : 'New folder path (the parent directory must exist)'}<input value={newPath} onChange={event => setNewPath(event.target.value)} placeholder={create === 'file' ? 'docs/plan.md' : 'docs/new-folder'} required disabled={busy}/></label><Button type="submit" disabled={busy}>Create</Button><Button type="button" variant="ghost" onClick={() => setCreate(undefined)} disabled={busy}>Cancel</Button></form>}
           <div className="file-workspace"><aside className="file-sidebar" aria-label="Project directory">{tree?.truncated && <p className="feedback">Too many entries; the list is truncated.</p>}<ul className="file-tree">{renderEntries()}</ul>{tree && !tree.entries.length && <p className="muted">Empty directory</p>}</aside>
@@ -185,7 +187,7 @@ export function App() {
   </Tabs>;
 }
 
-const views = [{ value: 'backlog', label: 'Backlog' }, { value: 'board', label: 'Kanban' }, { value: 'dependencies', label: 'Dependencies' }, { value: 'gantt', label: 'Gantt' }, { value: 'files', label: 'Files' }];
+const views = [{ value: 'backlog', label: 'Backlog' }, { value: 'board', label: 'Kanban' }, { value: 'dependencies', label: 'Dependencies' }, { value: 'gantt', label: 'Gantt' }, { value: 'files', label: 'Files' }, { value: 'activity', label: 'Activity' }];
 function ViewIcon({ kind }: { kind: string }) {
   const paths: Record<string, ReactNode> = {
     backlog: <><path d="M8 6h12M8 12h12M8 18h12"/><path d="M3 6h1M3 12h1M3 18h1"/></>,
@@ -193,6 +195,7 @@ function ViewIcon({ kind }: { kind: string }) {
     dependencies: <><rect x="2" y="9" width="6" height="6" rx="1"/><rect x="16" y="2" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M8 12h4V5h4M12 12v7h4"/></>,
     gantt: <><path d="M4 3v18h17M8 6h6M11 11h9M7 16h9"/></>,
     files: <><path d="M3 7V4h7l2 3h9v13H3z"/></>,
+    activity: <><path d="M3 12h4l3-8 4 16 3-8h4"/></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
 }

@@ -4,7 +4,7 @@
 
 Olav Tasks is a local task board and Markdown workspace. Markdown files remain the source of truth, so agents and people can work with the same project files using their existing tools.
 
-The first release includes Backlog, Kanban, Dependencies, Gantt, and Files views; Markdown planning, writing, and organization skills; and a lightweight `docs-kb` search skill. It runs as a local Node.js application and can be installed from an npm package archive. It does not provide cloud sync, authentication, or a hosted service. An optional chat dock can drive the Claude or Codex SDK already authenticated on the machine running it (see below).
+The first release includes Backlog, Kanban, Dependencies, Gantt, Files and Activity views; Markdown planning, writing, and organization skills; and a lightweight `docs-kb` search skill. It runs as a local Node.js application and can be installed from an npm package archive. It does not provide cloud sync, authentication, or a hosted service. An optional chat dock can drive the Claude or Codex SDK already authenticated on the machine running it (see below).
 
 ## Features
 
@@ -73,6 +73,8 @@ The file browser supports `.md` file operations. Other files may be listed but c
 The app checks file metadata every two seconds for external changes; it is not a persistent file-watching service. Moving a Markdown file does not update links that refer to it. Writes use version checks and atomic replacement for normal edit conflicts, but there is no cross-process transaction lock.
 
 ## Chat dock (optional)
+
+The **Activity** view (the pulse icon in the top bar) is read-only: the uncommitted changes and recent commits of the project from git, with a coloured diff for each file and the task ID next to task files. It is where you look to see what the agent changed; there is no way to edit or undo from it (ask the agent, or use git). It needs the project to be inside a git repository.
 
 A collapsible chat on the right of every page (open or collapse it with the bubble button in the centred tab group of the top bar, or the chevron in the dock) talks to the Claude Agent SDK or Codex SDK authenticated on the machine running the server. The icons start a new conversation, show the history, and collapse the dock; the Claude/Codex switch applies to a new conversation. Agents work in the project root like a normal terminal session: Claude asks you to approve each tool call in the dock (reads are allowed), Codex runs in a sandbox that can write inside the project root and has no network. The **YOLO** option next to Send bypasses every permission prompt for the next message (Claude `bypassPermissions`; Codex `danger-full-access` with network). 
 

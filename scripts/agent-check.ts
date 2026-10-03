@@ -192,6 +192,14 @@ assert.equal(restored.status, 'idle'); assert.equal(restored.events.length, befo
 await call('/api/agent/send', { task: chat.taskId, text: 'again' });
 await until(async () => (await run(chat.taskId)).events.length > before); await idle(chat.taskId);
 assert.equal(seen.at(-1)!.resume, 's1');
+// activity (read-only, from git): accepting T-1 earlier changed its task file; that edit is listed and its diff served, unlisted paths are refused
+const act = (await call('/api/activity')).data;
+assert.equal(act.git, true); assert.ok(act.commits.some((c: any) => c.subject === 'init'));
+assert.ok(act.changes.some((c: any) => c.path === 'T-1.md' && c.status === 'M'));
+assert.match((await call('/api/activity/diff?path=T-1.md')).data.diff, /\+status: done/);
+assert.equal((await call('/api/activity/diff?path=PROJECT.md')).status, 400); // committed and unchanged: not a listed change
+assert.equal((await call('/api/activity/diff?path=..%2F..%2Fetc%2Fpasswd')).status, 400);
+assert.equal((await call('/api/activity/diff')).status, 400);
 assert.equal((await fetch(base_url + '/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // writes need the app's own Origin
 server.close();
 console.log('agent-check ok');

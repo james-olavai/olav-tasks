@@ -327,3 +327,23 @@ button.dependency-node:hover { border-color:var(--primary); }
 .chat-toggle:hover { color:var(--foreground); }
 .chat-toggle.on { background:var(--background); color:var(--foreground); box-shadow:0 1px 2px rgba(15,23,42,.12); }
 @media (max-width:760px) { .app-header { padding:8px 12px; gap:8px; } .brand { font-size:0; gap:0; } .tab-group [role="tablist"] button, .tab-group .chat-toggle { width:38px; } }
+/* Activity: read-only changes from git, list on the left and the selected diff on the right. */
+.activity { display:grid; grid-template-columns:minmax(260px, 380px) minmax(0, 1fr); gap:20px; align-items:start; }
+@media (max-width: 900px) { .activity { grid-template-columns:1fr; } }
+.activity h3 { margin:14px 0 6px; font-size:14px; }
+.activity h3:first-child { margin-top:0; }
+.activity-files { list-style:none; margin:0; padding:0; }
+.activity-commit { padding:8px 0; border-bottom:1px solid var(--border); }
+.activity-subject { font-weight:600; font-size:13px; overflow-wrap:anywhere; }
+.activity-file { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:3px 6px; border-radius:6px; background:transparent; color:inherit; cursor:pointer; font-size:12px; }
+.activity-file:hover, .activity-file.on { background:var(--accent); }
+.activity-path { overflow-wrap:anywhere; flex:1; min-width:0; }
+.activity-task { font-size:10px; padding:1px 5px; border-radius:4px; background:var(--muted); color:var(--muted-foreground); }
+.activity-status { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:4px; font-size:10px; font-weight:700; background:var(--muted); color:var(--muted-foreground); }
+.activity-status.s-A, .activity-status.s-new { background:var(--success); color:var(--primary-foreground); }
+.activity-status.s-D { background:var(--destructive); color:var(--destructive-foreground); }
+.activity-diff-pane { position:sticky; top:0; min-width:0; }
+.activity-diff { max-height:70vh; overflow:auto; margin:6px 0 0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--card); font-size:12px; line-height:1.5; white-space:pre; }
+.activity-diff .add { color:#15803d; background:rgba(16,185,129,.10); display:inline-block; min-width:100%; }
+.activity-diff .del { color:#b91c1c; background:rgba(220,38,38,.08); display:inline-block; min-width:100%; }
+.activity-diff .hunk { color:var(--muted-foreground); }

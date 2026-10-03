@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { ApiError, ProjectFiles } from './project-files.js';
 import { AgentRuns, type Turn } from './agent.js';
+import { activity, activityDiff } from './activity.js';
 
 type Project = { root: string; name: string; version: string; port: number; host?: '127.0.0.1' | '0.0.0.0' };
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -90,6 +91,13 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (pathname === '/api/tree') { const scan = await files.scan(); json(res, 200, { entries: scan.entries, truncated: scan.truncated, diagnostics: scan.diagnostics }); return; }
           if (pathname === '/api/tasks') { json(res, 200, await files.tasks()); return; }
           if (pathname === '/api/file') { json(res, 200, await files.read(path)); return; }
+          if (pathname === '/api/activity') { json(res, 200, await activity(project.root)); return; }
+          if (pathname === '/api/activity/diff') {
+            const wanted = url.searchParams.get('path') ?? ''; const commit = url.searchParams.get('commit') ?? undefined;
+            if (!wanted || wanted.length > 1000) throw new ApiError(400, 'path is required.');
+            try { json(res, 200, await activityDiff(project.root, { path: wanted, commit })); } catch (error) { throw new ApiError(400, error instanceof Error ? error.message : 'Cannot produce that diff.'); }
+            return;
+          }
           if (pathname === '/api/agent/runs') { const allowed = agentAllowed(req.socket.remoteAddress); json(res, 200, { enabled: allowed, yolo: allowed && yoloAllowed(req.socket.remoteAddress), runs: allowed ? agents.list() : [] }); return; }
           if (pathname === '/api/agent/run') { json(res, 200, agentApi(req).get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
           if (pathname === '/api/agent/diff') { json(res, 200, await agentApi(req).diff(url.searchParams.get('task'))); return; }
