@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { ApiError, type ProjectFiles } from './project-files.js';
 
 const git = promisify(execFile);
@@ -14,17 +15,17 @@ export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
 type Run = { taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; pending?: Pending; abort: AbortController };
 const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted'] as const;
-export type TurnOptions = { prompt: string; cwd: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
+export type TurnOptions = { prompt: string; cwd: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
-export const claudeTurn: Turn = async function* ({ prompt, cwd, model, resume, signal, canUseTool }) {
+export const claudeTurn: Turn = async function* ({ prompt, cwd, systemPrompt, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
   signal.addEventListener('abort', () => abortController.abort(), { once: true });
   yield* query({
     prompt,
     options: {
-      cwd, abortController, ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
+      cwd, abortController, ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(resume ? { resume } : {}), permissionMode: 'default', permissionPrompts: 'host',
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   });
@@ -53,6 +54,14 @@ export const codexTurn: Turn = async function* ({ prompt, cwd, model, resume, si
   }
 };
 export const defaultTurns: Record<string, Turn> = { claude: claudeTurn, codex: codexTurn };
+
+// The bundled loop-dev skill, read once, becomes the Claude coordinator's rules. ponytail: Claude only; the Codex SDK exposes no system prompt.
+const loopRules = (() => {
+  try {
+    const text = readFileSync(fileURLToPath(new URL('../skills/loop-dev/SKILL.md', import.meta.url)), 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+    return `You are running inside Olav Tasks on one task, in its own git worktree. Follow this loop-dev skill as the coordinator, with these overrides: the repository's and the user's rules win; do not call the Jev scripts (no external routing is authorized); never edit the task file's status; when the acceptance checks pass or you are blocked, stop and report what changed, the evidence, and any blocker, because a human accepts the work.\n\n${text}`;
+  } catch { return undefined; }
+})();
 
 export class AgentRuns {
   private runs = new Map<string, Run>();
@@ -188,7 +197,7 @@ export class AgentRuns {
     void (async () => {
       try {
         for await (const message of this.turns[run.agent]({
-          prompt, cwd: run.workdir, model: run.model, resume: run.sessionId, signal: run.abort.signal,
+          prompt, cwd: run.workdir, model: run.model, systemPrompt: run.agent === 'claude' ? loopRules : undefined, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             const id = randomUUID();
             run.pending = { id, tool, resolve: allow => { run.pending = undefined; run.status = 'running'; resolve(allow); } };

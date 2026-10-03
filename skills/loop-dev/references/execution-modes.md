@@ -1,0 +1,15 @@
+# Execution modes
+
+Choose the executor after reading repository rules and the current host's available tools. Prefer the current host's authorized native subagent; evaluate external pi when native execution is absent, cannot meet the package's isolation needs, or the user explicitly chooses it. Keep this choice separate from Jev's `light|standard|expert` capability tier. The presence of a binary, API key, or native agent tool does not grant permission to use it.
+
+| Mode | Use when | Boundary |
+|---|---|---|
+| Codex native subagent | The current Codex session exposes collaboration tools, delegation is authorized, and an independent bounded package benefits from another context. | Use the host's `spawn_agent`/message/wait controls; do not start a second `codex exec` as a substitute. Child agents share the filesystem, so give disjoint owner files or read-only tasks. Honor the host's model and concurrency restrictions. |
+| Claude native subagent | The current Claude Code session exposes its native agent/delegation tool and repository rules allow it. | Use that host tool, not an assumed `claude` shell command. Verify its actual tool, model, permissions, and result format in the session; do not pretend Codex can invoke an absent Claude tool. Shared files need the same ownership and evidence review. |
+| External pi | A trusted pi runner or SDK is available, its credentials and scope are authorized, and the task benefits from that provider or the repository requires it. | Review the exact runner and allowed tools first. Keep secrets out of prompts and logs, use an explicit read/write/check manifest where supported, separate candidate from applied result, and independently inspect evidence. Do not download or run an unpinned tool merely because `pi` is absent. |
+
+Native subagents are not automatically cheaper. Use a read-only scout only when it avoids repeated exploration; a small known-file task usually needs no second context. Native tools are host-managed; this skill cannot enable them, install Claude Code, or change model access. If no permitted executor is available, report the blocker. Do not fall back to an unapproved runtime, provider, credential, or broader tool permission.
+
+Each work package names its executor, objective, non-goals, source revision, dirty-file context, allowed files, acceptance checks, and stop condition. A reader returns cited paths/lines and short evidence, not a full-file dump. A writer does not hand its own self-assessment to the verifier as proof. If two workers would edit the same file, serialize them or give the file one owner. Verify the merged final tree after all affected edits.
+
+Jev can suggest retrieval mode, single/parallel mode, repair hypothesis, and capability tier. Apply deterministic floors, repository restrictions, actual runtime availability, and the user's model choice before delegation. Map a tier to a concrete model only with `--models-file` and only if the selected runtime can honor it. Never label a static fallback or a runtime substitution as a Jev-selected model.

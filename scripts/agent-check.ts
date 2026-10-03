@@ -22,8 +22,9 @@ git('add', '-A'); git('commit', '-qm', 'init');
 const prompts: string[] = [];
 const cwds: string[] = [];
 const models: (string | undefined)[] = [];
-const turn: Turn = async function* ({ prompt, cwd, model, resume, canUseTool }) {
-  prompts.push(prompt); cwds.push(cwd); models.push(model);
+const systems: (string | undefined)[] = [];
+const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, resume, canUseTool }) {
+  systems.push(systemPrompt); prompts.push(prompt); cwds.push(cwd); models.push(model);
   if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
@@ -52,6 +53,8 @@ assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /^---\nschema: olav.t
 git('add', '-A'); git('commit', '-qm', 'meta');
 assert.equal((await call('/api/agent/start', { path: 'T-1.md' })).status, 200);
 assert.equal(models[0], 'model-deep');
+await until(async () => systems.length > 0);
+assert.match(systems[0] ?? '', /Loop development/); assert.match(systems[0] ?? '', /never edit the task file's status/);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /assignee: agent:claude/);
 assert.match(prompts[0], /Do the thing/);
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/);

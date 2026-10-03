@@ -88,7 +88,7 @@ node dist/cli.js skills install docs-kb --dir /path/to/agent/skills
 node dist/cli.js skills install olav-tasks-plan --dir /path/to/agent/skills
 ```
 
-The package includes `docs-kb`, `olav-tasks-plan`, `olav-tasks-write-markdown`, and `olav-tasks-organize-markdown`. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
+The package includes `docs-kb`, `loop-dev`, `olav-tasks-plan`, `olav-tasks-write-markdown`, and `olav-tasks-organize-markdown`. `loop-dev` is copied from its own repository (see `skills/loop-dev/UPSTREAM.md`); Claude runs started from the web page also receive its rules as their coordinator instructions. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
 
 ```bash
 node dist/cli.js skills uninstall olav-tasks-plan --dir /path/to/agent/skills
