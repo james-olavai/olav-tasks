@@ -275,3 +275,10 @@ button.dependency-node:hover { border-color:var(--primary); }
 .view-tabs>[role="tabpanel"] { margin:0; padding:0; }
 .view-tabs>[role="tabpanel"]>.empty-label:first-child { padding-top:0; }
 .dependencies-layout>.isolated-section:first-child { margin-top:0; }
+.agent-panel { margin-top:20px; padding-top:12px; border-top:1px solid var(--border); }
+.agent-log { list-style:none; margin:8px 0; padding:0; max-height:320px; overflow:auto; font-size:12px; }
+.agent-log li { padding:3px 0; white-space:pre-wrap; word-break:break-word; }
+.agent-log strong { color:var(--muted-foreground); font-weight:500; margin-right:6px; }
+.agent-error { color:var(--destructive); }
+.agent-input { display:flex; gap:8px; flex-wrap:wrap; }
+.agent-input input { flex:1 1 200px; min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:inherit; }

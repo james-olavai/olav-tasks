@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { AgentPanel } from './AgentPanel';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Status = 'todo' | 'in-progress' | 'done';
@@ -174,6 +175,7 @@ export function App() {
               {external && <div className="feedback warning" role="status">{external}</div>}
               {movePath !== undefined && <form className="operation-form" onSubmit={event => { event.preventDefault(); if (dirty && !window.confirm('移动前会丢弃未保存内容，确定继续？')) return; if (!window.confirm('移动或重命名可能破坏现有相对链接；工具不会自动修复引用。确定继续？')) return; void mutate(async () => { const next = await api<File & { warning: string }>('move', { path: file.path, to: movePath, version: file.version }); setFile(next); setDraft(next.content); setExternal(''); setMovePath(undefined); setNotice(next.warning || '已移动；现有引用未自动修复。'); }); }}><label>目标文件路径<input value={movePath} onChange={event => setMovePath(event.target.value)} required disabled={busy}/></label><p className="muted">目标父目录必须存在；不会覆盖已有文件，也不会自动修改文档链接。</p><Button type="submit" disabled={busy}>确认移动</Button><Button type="button" variant="ghost" onClick={() => setMovePath(undefined)}>取消</Button></form>}
               {editing && !taskFile ? <><label className="editor-label" htmlFor="markdown-editor">Markdown 原文（包含 frontmatter）{dirty ? ' · 未保存' : ''}</label><textarea id="markdown-editor" className="markdown-editor" value={draft} onChange={event => setDraft(event.target.value)} spellCheck={false} disabled={busy || opening}/></> : <article className="markdown-body">{markdown}</article>}
+              {taskFile && (() => { const task = board?.tasks.find(item => item.path === file.path); return task ? <AgentPanel taskId={task.id} path={task.path}/> : null; })()}
             </> : <div className="document-empty"><h3>选择 Markdown</h3></div>}</section></div>
         </TabsContent>
       </Tabs>
