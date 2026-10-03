@@ -55,7 +55,7 @@ ID 重复与无法解析的任务文件显示诊断，不选择其中一份作�
 - 日期只在计划明确时由 Agent 写入，不猜测、不从依赖或状态推算。Gantt 仅展示同时具备有效开始与结束日期的任务；缺少任一日期时进入“未排期”列表。完全无日期时显示空时间轴和未排期任务。
 - Backlog 表格和 Kanban 卡片显示负责人、工作量与模型档位；未设置负责人显示“未分配”，其余显示“—”。这些字段在网页只读，不触发自动分派或状态更新。
 - Backlog 与 Kanban 同样只读展示 `parent`、`blocked_by`。`tasks list` 列出任务快照；`tasks ready` 仅列出 todo、无阻塞、所有依赖 done 且子任务已完成的候选。扫描或任务图有诊断、截断时 `complete` 为 false 且候选为空；该结果不是任务锁，派工前重读原文。
-- 改看板的三个命令：`tasks claim <目录> <ID> --as human:|agent:<ID>` 原子地写入 `in-progress` 与负责人（未就绪或已被他人持有则失败，同一负责人重复认领幂等）；`tasks new <目录> --title …` 分配下一个未占用 ID 并独占创建文件（标题始终加引号，避免冒号、反引号使 frontmatter 失效）；`tasks validate <目录>` 在看板会显示诊断时以退出码 1 返回。Agent 直接编辑 Markdown 后应运行 validate。
+- 改看板的三个命令：`tasks claim <目录> <ID> --as human:|agent:<ID>` 原子地写入 `in-progress` 与负责人（未就绪或已被他人持有则失败，同一负责人重复认领幂等）；`tasks new <目录> --title …` 分配下一个未占用 ID 并独占创建文件（标题始终加引号，避免冒号、反引号使 frontmatter 失效）；`tasks validate <目录>` 在看板会显示诊断时以退出码 1 返回。Agent 直接编辑 Markdown 后应运行 validate。`tasks digest <目录>` 输出需要人拍板的事（`blocked_by`）、过期（`end_date` 已过且未完成）、陈旧（进行中且任务文件 7 天以上无变化，时间取自 git 提交，否则文件修改时间）、父任务进度和关键路径（未完成任务沿 `depends_on` 的最长链）；有诊断时不给就绪和关键路径。
 - Backlog 按优先级、ID、路径稳定排序，Dependencies 的箭头由依赖任务指向被依赖约束的任务。各视图点击任务均打开原 Markdown。
 - 写入前核对读取版本；外部更新时报告冲突并重新读取。文件操作在根目录边界内进行。
 - 文档链接使用相对路径。移动或重命名之前提示可能影响的引用；无法可靠扫描时说明检查范围，不能声称所有链接已修复。

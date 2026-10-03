@@ -8,17 +8,18 @@ import { installSkill, listSkills, uninstallSkill } from './skills.js';
 import { ProjectFiles } from './project-files.js';
 import { taskReadiness } from './task-readiness.js';
 import { claimTask, newTask, validateProject } from './pm-tools.js';
+import { buildDigest, renderDigest } from './task-digest.js';
 
 async function tasksCommand(args: string[]) {
   const { values, positionals } = parseArgs({ args, options: {
     help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' },
     as: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string' }, depends: { type: 'string' },
-    parent: { type: 'string' }, dir: { type: 'string' }, prefix: { type: 'string' }, body: { type: 'string' },
+    parent: { type: 'string' }, dir: { type: 'string' }, prefix: { type: 'string' }, body: { type: 'string' }, 'stale-days': { type: 'string' },
   }, allowPositionals: true });
-  const usage = 'Usage: olav-tasks tasks list <project-directory> [--json]\n       olav-tasks tasks ready <project-directory> [--json]\n       olav-tasks tasks claim <project-directory> <task-ID> --as <human:ID|agent:ID> [--json]\n       olav-tasks tasks new <project-directory> --title <text> [--priority P0|P1|P2] [--depends A,B] [--parent ID] [--dir <relative dir>] [--prefix PFX] [--body <text>] [--json]\n       olav-tasks tasks validate <project-directory> [--json]\nlist and ready are read-only snapshots; ready is not an execution reservation. claim atomically sets in-progress and the assignee, and fails if the task is not ready or is held by someone else. new allocates the next free ID. validate exits 1 when the board would show diagnostics.';
+  const usage = 'Usage: olav-tasks tasks list <project-directory> [--json]\n       olav-tasks tasks ready <project-directory> [--json]\n       olav-tasks tasks claim <project-directory> <task-ID> --as <human:ID|agent:ID> [--json]\n       olav-tasks tasks new <project-directory> --title <text> [--priority P0|P1|P2] [--depends A,B] [--parent ID] [--dir <relative dir>] [--prefix PFX] [--body <text>] [--json]\n       olav-tasks tasks validate <project-directory> [--json]\n       olav-tasks tasks digest <project-directory> [--stale-days 7] [--json]\nlist and ready are read-only snapshots; ready is not an execution reservation. claim atomically sets in-progress and the assignee, and fails if the task is not ready or is held by someone else. new allocates the next free ID. validate exits 1 when the board would show diagnostics. digest reports what needs a person, what is overdue or stale, progress and the critical path.';
   if (values.help) { console.log(usage); return; }
   const [sub, dir, id] = positionals;
-  if (!['list', 'ready', 'claim', 'new', 'validate'].includes(sub) || !dir || (sub === 'claim' ? positionals.length !== 3 : positionals.length !== 2)) throw new Error(`Invalid tasks command.\n${usage}`);
+  if (!['list', 'ready', 'claim', 'new', 'validate', 'digest'].includes(sub) || !dir || (sub === 'claim' ? positionals.length !== 3 : positionals.length !== 2)) throw new Error(`Invalid tasks command.\n${usage}`);
   const root = await realpath(dir);
   if (!(await stat(root)).isDirectory()) throw new Error('Project path must be a directory.');
   if (sub === 'claim') {
@@ -30,6 +31,13 @@ async function tasksCommand(args: string[]) {
   if (sub === 'new') {
     const result = await newTask(root, { title: values.title ?? '', priority: values.priority, depends: values.depends?.split(',').map(item => item.trim()).filter(Boolean), parent: values.parent, dir: values.dir, prefix: values.prefix, body: values.body });
     console.log(values.json ? JSON.stringify(result) : `Created ${result.id} (${result.path})`);
+    return;
+  }
+  if (sub === 'digest') {
+    const staleDays = values['stale-days'] === undefined ? 7 : Number(values['stale-days']);
+    if (!Number.isFinite(staleDays) || staleDays < 0) throw new Error('--stale-days must be a non-negative number.');
+    const digest = await buildDigest(root, await new ProjectFiles(root).tasks(), { staleDays });
+    console.log(values.json ? JSON.stringify(digest) : renderDigest(digest));
     return;
   }
   if (sub === 'validate') {

@@ -61,9 +61,10 @@ Operations an AI project manager needs to change the board safely (the web page 
 olav-tasks tasks claim /path/to/project OT-007 --as agent:codex   # in-progress + assignee in one write; fails if not ready or held by someone else
 olav-tasks tasks new /path/to/project --title "Fix login" --priority P1 --depends OT-003   # next free ID, exclusive file creation, title always quoted
 olav-tasks tasks validate /path/to/project                          # exit 1 when the board would show diagnostics
+olav-tasks tasks digest /path/to/project                            # what needs a person, overdue, stale, progress, critical path
 ```
 
-`claim` is atomic across processes (a lock file beside the project, never inside it) and idempotent for the same assignee. `new` never reuses an ID, even with concurrent creators. All three accept `--json`.
+`claim` is atomic across processes (a lock file beside the project, never inside it) and idempotent for the same assignee. `new` never reuses an ID, even with concurrent creators. All four accept `--json`. `digest` reads when each in-progress task file last changed from git (else its modification time) and flags the ones untouched for 7+ days (`--stale-days N`); it is the raw material for the `olav-tasks-report` skill.
 
 The web app reads and writes the selected local project directory. Agents maintain task status and dates in the source files; task cards and valid task documents are read-only in the browser. Ordinary Markdown files can be edited in the Files view. Before saving, the app checks whether the file changed externally and reports conflicts rather than silently overwriting newer content.
 
@@ -113,7 +114,7 @@ node dist/cli.js skills install olav-tasks-plan --dir /path/to/agent/skills
 node dist/cli.js skills install olav-tasks-execute --dir /path/to/agent/skills
 ```
 
-The package includes `docs-kb`, `olav-tasks-plan`, `olav-tasks-write-markdown`, `olav-tasks-organize-markdown`, and `olav-tasks-execute`. The execution skill coordinates native agents within an active session and follows project authorization; it does not start a background worker. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
+The package includes `docs-kb`, `olav-tasks-plan`, `olav-tasks-write-markdown`, `olav-tasks-organize-markdown`, `olav-tasks-execute`, and `olav-tasks-report`. The execution skill coordinates native agents within an active session and follows project authorization; it does not start a background worker. Skill installation does not discover or change global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different existing content or a symlink. Uninstall only removes a directory whose contents exactly match the installed skill:
 
 ```bash
 node dist/cli.js skills uninstall olav-tasks-plan --dir /path/to/agent/skills
