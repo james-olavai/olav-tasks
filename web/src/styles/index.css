@@ -282,3 +282,6 @@ button.dependency-node:hover { border-color:var(--primary); }
 .agent-error { color:var(--destructive); }
 .agent-input { display:flex; gap:8px; flex-wrap:wrap; }
 .agent-input input { flex:1 1 200px; min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--background); color:inherit; }
+.agent-review { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+.agent-branch { font-size:11px; color:var(--muted-foreground); }
+.agent-diff pre { max-height:360px; overflow:auto; font-size:11px; background:var(--muted); padding:8px; border-radius:6px; }

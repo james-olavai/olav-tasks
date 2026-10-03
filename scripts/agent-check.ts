@@ -1,16 +1,23 @@
 // Run: npx tsx scripts/agent-check.ts — drives the agent API with a fake Turn (no network, no credentials).
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../src/server.js';
 import type { Turn } from '../src/agent.js';
 
-const root = await mkdtemp(join(tmpdir(), 'agent-check-'));
+const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
+const root = join(parent, 'proj');
+execFileSync('mkdir', [root]);
 await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitle: Demo\nstatus: todo\n---\n\nDo the thing.\n');
+const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root });
+git('init', '-q'); git('add', '-A'); git('commit', '-qm', 'init');
 const prompts: string[] = [];
-const turn: Turn = async function* ({ prompt, resume, canUseTool }) {
-  prompts.push(prompt);
+const cwds: string[] = [];
+const turn: Turn = async function* ({ prompt, cwd, resume, canUseTool }) {
+  prompts.push(prompt); cwds.push(cwd);
+  if (!resume) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
     const allowed = await canUseTool('Bash', { command: 'ls' });
@@ -18,9 +25,9 @@ const turn: Turn = async function* ({ prompt, resume, canUseTool }) {
   } else yield { type: 'assistant', message: { content: [{ type: 'text', text: `resumed ${resume}` }] } };
   yield { type: 'result', result: 'ok' };
 };
-const port = 4900 + Math.floor(Math.random() * 90);
-const server = await startServer({ root, name: 't', version: '0', port }, { turn });
-const base = `http://127.0.0.1:${port}`;
+let port = 4900 + Math.floor(Math.random() * 90);
+let server = await startServer({ root, name: 't', version: '0', port }, { turn });
+let base = `http://127.0.0.1:${port}`;
 const call = async (path: string, body?: unknown) => {
   const res = await fetch(base + path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
   return { status: res.status, data: await res.json() as any };
@@ -39,7 +46,25 @@ await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 
 assert.ok((await call('/api/agent/run?task=T-1')).data.events.some((e: any) => e.text === 'allowed'));
 await call('/api/agent/send', { task: 'T-1', text: 'more' });
 await until(async () => (await call('/api/agent/run?task=T-1&since=3')).data.events.some((e: any) => e.text === 'resumed s1'));
-assert.deepEqual((await call('/api/agent/runs')).data.runs, [{ taskId: 'T-1', agent: 'claude', status: 'idle' }]);
+assert.deepEqual((await call('/api/agent/runs')).data.runs, [{ taskId: 'T-1', agent: 'claude', status: 'idle', branch: 'agent/T-1' }]);
+// worktree isolation: agent wrote out.txt in its own worktree, not in the project root
+assert.notEqual(cwds[0], root);
+await assert.rejects(readFile(join(root, 'out.txt'), 'utf8'));
+const diff = (await call('/api/agent/diff?task=T-1')).data;
+assert.equal(diff.branch, 'agent/T-1');
+assert.match(diff.patch, /\+hello/);
+// persistence: a fresh server instance restores the run and can resume by sessionId
+server.close();
+port += 100; base = `http://127.0.0.1:${port}`;
+server = await startServer({ root, name: 't', version: '0', port }, { turn });
+const restored = (await call('/api/agent/run?task=T-1')).data;
+assert.equal(restored.status, 'idle'); assert.ok(restored.events.length > 3);
+await call('/api/agent/send', { task: 'T-1', text: 'again' });
+await until(async () => (await call('/api/agent/run?task=T-1')).data.status === 'idle' && prompts.at(-1) === 'again');
+// accept: only a human action sets done
+assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: in-progress/);
+assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, true);
+assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
 server.close();
 console.log('agent-check ok');

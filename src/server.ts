@@ -79,6 +79,7 @@ export async function startServer(project: Project, options: { turn?: Turn } = {
           if (pathname === '/api/file') { json(res, 200, await files.read(path)); return; }
           if (pathname === '/api/agent/runs') { json(res, 200, { enabled: !!agents, runs: agents?.list() ?? [] }); return; }
           if (pathname === '/api/agent/run') { json(res, 200, agentApi().get(url.searchParams.get('task') ?? '', Number(url.searchParams.get('since') ?? 0) || 0)); return; }
+          if (pathname === '/api/agent/diff') { json(res, 200, await agentApi().diff(url.searchParams.get('task'))); return; }
           if (pathname === '/api/revision') { json(res, 200, { revision: (await files.scan()).revision }); return; }
           if (pathname === '/api/asset') {
             const asset = await files.asset(path);
@@ -92,6 +93,7 @@ export async function startServer(project: Project, options: { turn?: Turn } = {
           if (pathname === '/api/agent/start' && req.method === 'POST') { json(res, 200, await agentApi().start(body.path)); return; }
           if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi().send(body.task, body.text)); return; }
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi().permission(body.task, body.id, body.allow)); return; }
+          if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi().accept(body.task)); return; }
           if (pathname === '/api/agent/stop' && req.method === 'POST') { json(res, 200, agentApi().stop(body.task)); return; }
           if (pathname === '/api/file' && req.method === 'POST') { json(res, 200, await files.save(body.path, body.content, body.version)); return; }
           if (pathname === '/api/file' && req.method === 'DELETE') { json(res, 200, await files.remove(body.path, body.version)); return; }
