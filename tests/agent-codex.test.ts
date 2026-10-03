@@ -125,7 +125,7 @@ test('completed, failed, thrown, early EOF and abort close streams and settle st
     let closed = false;
     scripts.push(async function* (signal) { try { yield started(kind); if (kind === 'throw') throw new Error('stream failure'); if (kind === 'abort') await new Promise<void>(resolve => { if (signal.aborted) resolve(); else signal.addEventListener('abort', resolve, { once: true }); }); else if (ending) yield ending; } finally { closed = true; } });
     const id = runs.chat('codex', kind).taskId;
-    if (kind === 'abort') { await until(() => runs.get(id).status === 'running' && calls.at(-1)?.prompt === kind); runs.stop(id); }
+    if (kind === 'abort') { await until(() => runs.get(id).status === 'running' && calls.at(-1)?.prompt.endsWith(kind)); runs.stop(id); } // a new conversation's first message now carries the project-manager rules and brief before what the user typed
     const detail = await settled(runs, id);
     assert.equal(detail.status, expected, kind);
     assert.equal(closed, true, `${kind} iterator finally`);
