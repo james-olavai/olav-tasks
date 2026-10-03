@@ -15,6 +15,7 @@ process.env.OLAV_TASKS_SETTING_SOURCES = 'none'; assert.deepEqual(caps().setting
 for (const name of ['OLAV_TASKS_MAX_BUDGET_USD', 'OLAV_TASKS_MAX_TURNS', 'OLAV_TASKS_SETTING_SOURCES']) delete process.env[name];
 const parent = await mkdtemp(join(tmpdir(), 'agent-check-'));
 process.env.OLAV_TASKS_MAX_RUNS = '1';
+process.env.OLAV_TASKS_EFFORT = '{"claude":"high"}';
 process.env.ANTHROPIC_API_KEY = 'secret-must-not-reach-checks';
 process.env.OLAV_TASKS_MODELS = JSON.stringify({ claude: { deep: 'model-deep' } });
 const root = join(parent, 'proj');
@@ -23,7 +24,7 @@ await writeFile(join(root, 'T-1.md'), '---\nschema: olav.tasks/v1\nid: T-1\ntitl
 const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root });
 git('init', '-q');
 await writeFile(join(root, 'T-2.md'), '---\nschema: olav.tasks/v1\nid: T-2\ntitle: Second\nstatus: todo\ndepends_on: [T-1]\n---\n\nNeeds T-1.\n');
-await writeFile(join(root, 'T-3.md'), '---\nschema: olav.tasks/v1\nid: T-3\ntitle: Third\nstatus: todo\ncheck: test -f out.txt\ndepends_on: [T-1]\n---\n\nAlso needs T-1.\n');
+await writeFile(join(root, 'T-3.md'), '---\nschema: olav.tasks/v1\nid: T-3\ntitle: Third\nstatus: todo\ncheck: test -f out.txt\nmodel_profile: balanced\ndepends_on: [T-1]\n---\n\nAlso needs T-1.\n');
 await writeFile(join(root, 'T-5.md'), '---\nschema: olav.tasks/v1\nid: T-5\ntitle: Slow check\nstatus: todo\ncheck: sleep 5\ndepends_on: [T-9]\n---\n\nSlow.\n');
 await writeFile(join(root, 'T-4.md'), '---\nschema: olav.tasks/v1\nid: T-4\ntitle: Fourth\nstatus: todo\ndepends_on: [T-9]\n---\n\nMissing dependency.\n');
 git('add', '-A'); git('commit', '-qm', 'init');
@@ -32,8 +33,10 @@ const cwds: string[] = [];
 const models: (string | undefined)[] = [];
 const systems: (string | undefined)[] = [];
 const flags: boolean[] = [];
-const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, readOnly, resume, canUseTool }) {
-  systems.push(systemPrompt); flags.push(!!readOnly); prompts.push(prompt); cwds.push(cwd); models.push(model);
+const efforts: (string | undefined)[] = [];
+const codexSeen: { model?: string; effort?: string }[] = [];
+const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, readOnly, effort, resume, canUseTool }) {
+  efforts.push(effort); systems.push(systemPrompt); flags.push(!!readOnly); prompts.push(prompt); cwds.push(cwd); models.push(model);
   if (!resume && !readOnly) await writeFile(join(cwd, 'out.txt'), 'hello\n');
   yield { type: 'system', session_id: 's1' };
   if (!resume) {
@@ -47,7 +50,7 @@ const turn: Turn = async function* ({ prompt, cwd, model, systemPrompt, readOnly
   yield { type: 'result', result: 'ok', reported: { cost_usd: resume ? 0.8 : 0.5, input: 100, output: 10, cache_read: 50, cache_write: 5, cumulative: true } };
 };
 const codexRuns: string[] = [];
-const codexFake: Turn = async function* ({ prompt, cwd }) { codexRuns.push(cwd); yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } }; yield { type: 'result', result: 'ok', reported: { input: 7, output: 3, cache_read: 2, cache_write: 0, cumulative: false } }; };
+const codexFake: Turn = async function* ({ prompt, cwd, model, effort }) { codexRuns.push(cwd); codexSeen.push({ model, effort }); yield { type: 'assistant', message: { content: [{ type: 'text', text: 'codex did ' + prompt.slice(0, 5) }] } }; yield { type: 'result', result: 'ok', reported: { input: 7, output: 3, cache_read: 2, cache_write: 0, cumulative: false } }; };
 let port = 4900 + Math.floor(Math.random() * 90);
 let server = await startServer({ root, name: 't', version: '0', port }, { turns: { claude: turn, codex: codexFake } });
 let base = `http://127.0.0.1:${port}`;
@@ -94,7 +97,8 @@ assert.equal(diff.branch, 'agent/T-1');
 assert.match(diff.patch, /\+hello/);
 // persistence: a fresh server instance restores the run and can resume by sessionId
 server.close();
-port += 100; base = `http://127.0.0.1:${port}`;
+port += 100; if (port === 5060 || port === 5061) port += 2; // fetch refuses these ports
+base = `http://127.0.0.1:${port}`;
 server = await startServer({ root, name: 't', version: '0', port }, { turns: { claude: turn, codex: codexFake } });
 const restored = (await call('/api/agent/run?task=T-1')).data;
 assert.equal(restored.status, 'idle'); assert.ok(restored.events.length > 3);
@@ -109,7 +113,10 @@ assert.equal((await call('/api/agent/accept', { task: 'T-1' })).data.accepted, t
 assert.match(await readFile(join(root, 'T-1.md'), 'utf8'), /status: done/);
 assert.equal((await fetch(base + '/api/agent/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403); // no Origin
 // subagent roles: pinned tiers and tools, overridable; events from a subagent are attributed to its role and model
-assert.deepEqual(Object.keys(roleAgents()), ['explorer', 'implementer', 'reviewer']);
+assert.deepEqual(Object.keys(roleAgents()), ['explorer', 'researcher', 'implementer', 'reviewer']);
+assert.ok(Object.values(roleAgents()).every(role => role.effort === 'medium')); // medium for every role by default
+assert.equal(roleAgents().researcher.model, 'sonnet'); assert.ok(roleAgents().researcher.tools.includes('WebSearch') && !roleAgents().researcher.tools.includes('Bash'));
+process.env.OLAV_TASKS_ROLE_EFFORT = '{"explorer":"low","reviewer":"bogus"}'; assert.equal(roleAgents().explorer.effort, 'low'); assert.equal(roleAgents().reviewer.effort, 'medium'); delete process.env.OLAV_TASKS_ROLE_EFFORT;
 assert.equal(roleAgents().explorer.model, 'haiku'); assert.deepEqual(roleAgents().explorer.tools, ['Read', 'Grep', 'Glob']);
 process.env.OLAV_TASKS_ROLE_MODELS = '{"reviewer":"model-r"}'; assert.equal(roleAgents().reviewer.model, 'model-r'); assert.equal(roleAgents().implementer.model, 'sonnet'); delete process.env.OLAV_TASKS_ROLE_MODELS;
 const roleEvents = (await call('/api/agent/run?task=T-1')).data.events;
@@ -139,6 +146,8 @@ assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'nope' }))
 assert.equal((await call('/api/agent/start', { path: 'T-3.md', agent: 'codex' })).data.agent, 'codex');
 await until(async () => (await call('/api/agent/run?task=T-3')).data.status === 'idle');
 assert.equal(codexRuns.length, 1);
+// Codex defaults: balanced -> gpt-6.1-sol, medium effort; Claude main effort comes from OLAV_TASKS_EFFORT
+assert.deepEqual(codexSeen[0], { model: 'gpt-6.1-sol', effort: 'medium' }); assert.equal(efforts[0], 'high');
 const red = (await call('/api/agent/run?task=T-3')).data.check; // codex fake wrote no out.txt, so the check fails: evidence, not a status change
 assert.equal(red.ok, false); assert.equal(red.exit, 1);
 assert.equal((await call('/api/agent/recheck', { task: 'T-3' })).data.check.ok, false);
@@ -172,6 +181,7 @@ assert.equal((await call(`/api/agent/diff?task=${chat.taskId}`)).status, 409);
 assert.equal((await call('/api/agent/chat', { agent: 'nope', text: 'x' })).status, 400);
 // conversation-first task start: the user's first message is carried into the run
 await until(async () => (await call(`/api/agent/run?task=${chat.taskId}`)).data.status === 'idle');
+await until(async () => !['running', 'blocked'].includes((await call('/api/agent/run?task=T-2')).data.status)); // the earlier stop settles asynchronously
 assert.equal((await call('/api/agent/start', { path: 'T-2.md', agent: 'claude', message: 'focus on the parser first' })).status, 200);
 assert.match(prompts.at(-1) ?? '', /Instruction from the user for this run: focus on the parser first/);
 assert.equal((await call('/api/agent/run?task=T-2')).data.events.find((e: any) => e.type === 'user' && /parser/.test(e.text)).text.startsWith('focus on the parser first'), true); // the log shows the user's words, not the generated brief
