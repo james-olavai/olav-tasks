@@ -103,7 +103,7 @@ export async function startServer(project: Project, options: { turns?: Record<st
           if (!req.headers.origin) throw new ApiError(403, "Writes require this application's local Origin.");
           if (!['POST', 'PATCH', 'DELETE'].includes(req.method ?? '')) throw new ApiError(405, 'Method not allowed.');
           const body = await requestBody(req);
-          if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text, yolo(req, body.yolo))); return; }
+          if (pathname === '/api/agent/chat' && req.method === 'POST') { json(res, 200, agentApi(req).chat(body.agent, body.text, yolo(req, body.yolo), body.reasoningEffort)); return; }
           if (pathname === '/api/agent/send' && req.method === 'POST') { json(res, 200, agentApi(req).send(body.task, body.text, yolo(req, body.yolo))); return; }
           if (pathname === '/api/agent/permission' && req.method === 'POST') { json(res, 200, agentApi(req).permission(body.task, body.id, body.allow)); return; }
           if (pathname === '/api/agent/accept' && req.method === 'POST') { json(res, 200, await agentApi(req).accept(body.task)); return; }

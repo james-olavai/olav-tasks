@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button';
 
 type Item = { taskId: string; kind: 'task' | 'chat'; title: string; agent: string; status: string; updatedAt: string | null };
 type Event = { seq: number; type: string; text: string; role?: string; model?: string };
-type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; turns: number };
-type Detail = { taskId: string; agent: string; status: string; yolo?: boolean; usage?: Usage | null; events: Event[]; pending?: { id: string; tool: string } };
+type Usage = { cost_usd?: number; input: number; output: number; reasoning_output?: number; reasoning_coverage?: 'complete' | 'partial' | 'unknown'; cache_read: number; turns: number };
+type Detail = { taskId: string; agent: string; status: string; yolo?: boolean; model?: string | null; reasoningEffort?: string | null; usage?: Usage | null; usageCoverage?: 'complete' | 'partial' | 'unknown'; persistenceError?: string | null; events: Event[]; pending?: { id: string; tool: string } };
 const labels: Record<string, string> = { running: 'Running', blocked: 'Awaiting approval', idle: 'Idle', failed: 'Failed', stopped: 'Stopped' };
 const names: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
@@ -39,6 +39,7 @@ export function ChatToggle({ open, onToggle }: { open: boolean; onToggle: () => 
 export function ChatDock({ onClose }: { onClose: () => void }) {
   const [agent, setAgent] = useState(() => store.get('olav-tasks-chat-agent', 'claude'));
   const [yolo, setYolo] = useState(() => store.get('olav-tasks-chat-yolo', '0') === '1');
+  const [reasoningEffort, setReasoningEffort] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [yoloAllowed, setYoloAllowed] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
@@ -78,7 +79,7 @@ export function ChatDock({ onClose }: { onClose: () => void }) {
     const message = text.trim();
     if (!message) return;
     try {
-      if (selected === 'new') setSelected((await call<Detail>('chat', { agent, text: message, yolo: useYolo })).taskId);
+      if (selected === 'new') setSelected((await call<Detail>('chat', { agent, text: message, yolo: useYolo, ...(agent === 'codex' && reasoningEffort ? { reasoningEffort } : {}) })).taskId);
       else await call<Detail>('send', { task: selected, text: message, yolo: useYolo });
       setText(''); setError('');
     } catch (cause) { setError((cause as Error).message); }
@@ -93,7 +94,7 @@ export function ChatDock({ onClose }: { onClose: () => void }) {
     <header className="chat-head">
       <span className="chat-agents" role="group" aria-label="Agent">{Object.keys(names).map(name => <button key={name} type="button" className={shownAgent === name ? 'on' : ''} disabled={selected !== 'new'} title={selected === 'new' ? `Use ${names[name]}` : 'An existing conversation keeps its agent; start a new one to switch'} onClick={() => { setAgent(name); store.set('olav-tasks-chat-agent', name); }}>{names[name]}</button>)}</span>
       <span className="chat-actions">
-        <button type="button" className="icon-button" onClick={() => { setSelected('new'); setHistory(false); setError(''); }} aria-label="New conversation" title="New conversation">{icons.plus}</button>
+        <button type="button" className="icon-button" onClick={() => { setSelected('new'); setReasoningEffort(''); setHistory(false); setError(''); }} aria-label="New conversation" title="New conversation">{icons.plus}</button>
         <button type="button" className={`icon-button ${history ? 'on' : ''}`} onClick={() => setHistory(value => !value)} aria-label="History" aria-expanded={history} title="History">{icons.history}</button>
         <button type="button" className="icon-button" onClick={onClose} aria-label="Collapse chat" title="Collapse chat">{icons.collapse}</button>
       </span>
@@ -107,8 +108,11 @@ export function ChatDock({ onClose }: { onClose: () => void }) {
         <div className="chat-meta">
           <span className={`status-badge ${detail.status}`}>{names[detail.agent] ?? detail.agent} · {labels[detail.status] ?? detail.status}</span>
           {detail.yolo && <span className="yolo-badge" title="This turn ran with all permission checks bypassed">YOLO</span>}
-          {detail.usage && <small className="muted" title="Cost is the SDK's local estimate, not a bill">{detail.usage.cost_usd !== undefined ? `≈ $${detail.usage.cost_usd.toFixed(2)} · ` : ''}in {k(detail.usage.input)} · out {k(detail.usage.output)}</small>}
+          {detail.model && <small className="muted">Requested model: {detail.model}</small>}
+          {detail.reasoningEffort && <small className="muted">Requested reasoning: {detail.reasoningEffort}</small>}
+          <small className="muted" title="Reasoning output is included in output tokens; cost is the SDK's local estimate, not a bill">Usage {detail.usageCoverage ?? 'unknown'} · {detail.usage ? `${detail.usage.cost_usd !== undefined ? `≈ $${detail.usage.cost_usd.toFixed(2)}` : 'cost unknown'} · in ${k(detail.usage.input)} · out ${k(detail.usage.output)} · reasoning output ${detail.usage.reasoning_output === undefined ? 'unknown' : `${k(detail.usage.reasoning_output)} (${detail.usage.reasoning_coverage ?? 'unknown'})`} · ${detail.usage.turns} counted turns` : 'no reported turns · reasoning output unknown'}</small>
         </div>
+        {detail.persistenceError && <div className="feedback error" role="alert">{detail.persistenceError}</div>}
         <ol className="chat-log">{detail.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.role ? `${event.role}${event.model ? ` · ${event.model}` : ''}` : event.type === 'user' ? 'You' : event.type}</strong> {event.text}</li>)}<div ref={bottom}/></ol>
         {detail.pending && <div className="feedback warning" role="status">Approval needed: {detail.pending.tool}
           <Button size="sm" onClick={() => void act('permission', { task: selected, id: detail.pending!.id, allow: true })}>Allow</Button>
@@ -119,6 +123,7 @@ export function ChatDock({ onClose }: { onClose: () => void }) {
       <textarea value={text} rows={3} disabled={!enabled || busy} placeholder={selected === 'new' ? 'Message (Enter to send, Shift+Enter for a new line)' : 'Continue…'} aria-label="Message"
         onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }}/>
       <div className="chat-send">
+        {selected === 'new' && agent === 'codex' && <label className="muted">Reasoning <select aria-label="Codex reasoning effort" value={reasoningEffort} onChange={event => setReasoningEffort(event.target.value)}><option value="">Default (server setting)</option>{['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
         <label className={`yolo-option ${useYolo ? 'on' : ''}`} title={yoloAllowed ? 'Bypass all permission prompts for the next message' : 'YOLO is only available on the machine running Olav Tasks'}>
           <input type="checkbox" checked={useYolo} disabled={!enabled || !yoloAllowed} onChange={event => toggleYolo(event.target.checked)}/> YOLO
         </label>

@@ -3,12 +3,12 @@ import { Button } from '@/components/ui/button';
 
 type AgentEvent = { seq: number; type: string; text: string; role?: string; model?: string };
 type Diff = { branch: string; stat: string; patch: string; truncated: boolean };
-type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
+type Usage = { cost_usd?: number; input: number; output: number; reasoning_output?: number; reasoning_coverage?: 'complete' | 'partial' | 'unknown'; cache_read: number; cache_write: number; turns: number };
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 // Cost is a client-side estimate and absent when the agent does not report it.
-const usageText = (u: Usage) => `${u.cost_usd !== undefined ? `≈ $${u.cost_usd.toFixed(2)} · ` : 'cost unknown · '}in ${k(u.input)} · out ${k(u.output)} · cache read ${k(u.cache_read)} · ${u.turns} turns`;
+const usageText = (u: Usage) => `${u.cost_usd !== undefined ? `≈ $${u.cost_usd.toFixed(2)} · ` : 'cost unknown · '}in ${k(u.input)} · out ${k(u.output)} · reasoning output ${u.reasoning_output === undefined ? 'unknown' : `${k(u.reasoning_output)} (${u.reasoning_coverage ?? 'unknown'})`} · cache read ${k(u.cache_read)} · ${u.turns} counted turns`;
 type Check = { command: string; ok: boolean; exit: number | null; timedOut: boolean; ms: number; output: string };
-type Run = { check?: Check | null; cleaned?: boolean; usage?: Usage | null; model?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
+type Run = { check?: Check | null; cleaned?: boolean; usage?: Usage | null; usageCoverage?: 'complete' | 'partial' | 'unknown'; persistenceError?: string | null; model?: string | null; reasoningEffort?: string | null; branch?: string; isolated?: boolean; accepted?: boolean; status: 'running' | 'blocked' | 'idle' | 'failed' | 'stopped'; agent: string; events: AgentEvent[]; pending?: { id: string; tool: string } };
 const labels: Record<string, string> = { running: 'Running', blocked: 'Awaiting approval', idle: 'Waiting for input', failed: 'Failed', stopped: 'Stopped' };
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/agent/${path}`, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -39,8 +39,9 @@ export function AgentPanel({ taskId }: { taskId: string }) {
   const busy = run?.status === 'running' || run?.status === 'blocked';
   if (!run) return null;
   return <section className="agent-panel" aria-label="Agent">
-    <h4>Agent{run && <span className={`status-badge ${run.status}`}> {run.agent} · {labels[run.status]}{run.accepted ? ' · accepted' : ''}</span>}{run?.usage && <span className="agent-branch" title="Cost is the SDK's local estimate, not a bill"> {usageText(run.usage)}</span>}{run?.branch && <code className="agent-branch"> {run.branch}{run.model ? ` · ${run.model}` : ''}</code>}</h4>
+    <h4>Agent{run && <span className={`status-badge ${run.status}`}> {run.agent} · {labels[run.status]}{run.accepted ? ' · accepted' : ''}</span>}{run && <span className="agent-branch" title="Reasoning output is included in output tokens; cost is the SDK's local estimate, not a bill"> Usage {run.usageCoverage ?? 'unknown'} · {run.usage ? usageText(run.usage) : 'no reported turns · reasoning output unknown'}</span>}{run?.model && <span className="agent-branch"> Requested model: {run.model}</span>}{run?.reasoningEffort && <span className="agent-branch"> Requested reasoning: {run.reasoningEffort}</span>}{run?.branch && <code className="agent-branch"> {run.branch}</code>}</h4>
     {error && <div className="feedback error" role="alert">{error}</div>}
+    {run.persistenceError && <div className="feedback error" role="alert">{run.persistenceError}</div>}
     {run && <>
       <ol className="agent-log">{run.events.map(event => <li key={event.seq} className={`agent-${event.type}`}><strong>{event.role ? `${event.role}${event.model ? ` · ${event.model}` : ''}` : event.type}</strong> {event.text}</li>)}</ol>
       {run.pending && <div className="feedback warning" role="status">Approval needed: {run.pending.tool}

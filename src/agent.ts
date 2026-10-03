@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { ApiError, type ProjectFiles } from './project-files.js';
@@ -13,19 +13,20 @@ export type AgentEvent = { seq: number; type: 'user' | 'text' | 'tool' | 'permis
 export type RunStatus = 'running' | 'blocked' | 'idle' | 'failed' | 'stopped';
 type Pending = { id: string; tool: string; resolve: (allow: boolean) => void };
 // Token/cost totals for a run. cost_usd is absent when the agent does not report it (unknown, not zero).
-export type Usage = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; turns: number };
-type Reported = { cost_usd?: number; input: number; output: number; cache_read: number; cache_write: number; cumulative: boolean };
+export type Usage = { cost_usd?: number; input: number; output: number; reasoning_output?: number; reasoning_coverage?: UsageCoverage; cache_read: number; cache_write: number; turns: number };
+export type UsageCoverage = 'complete' | 'partial' | 'unknown';
+type Reported = { cost_usd?: number; input: number; output: number; reasoning_output?: number; cache_read: number; cache_write: number; cumulative: boolean };
 // Result of the task's own check command, run by the server (not the agent) in the run's worktree.
 export type CheckResult = { command: string; ok: boolean; exit: number | null; timedOut: boolean; ms: number; output: string; at: string };
-type Run = { yolo?: boolean; kind?: 'task' | 'chat'; title?: string; updatedAt?: string; check?: CheckResult; spawned?: Map<string, string>; usage?: Usage; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
-const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'accepted', 'cleaned', 'usage', 'check', 'kind', 'title', 'updatedAt', 'yolo'] as const;
+type Run = { yolo?: boolean; kind?: 'task' | 'chat'; title?: string; updatedAt?: string; check?: CheckResult; spawned?: Map<string, string>; usage?: Usage; usageCoverage?: UsageCoverage; persistenceError?: string; taskId: string; path: string; agent: string; status: RunStatus; sessionId?: string; events: AgentEvent[]; workdir: string; branch?: string; base?: string; model?: string; reasoningEffort?: string; accepted?: boolean; cleaned?: boolean; pending?: Pending; abort: AbortController };
+const saved = ['taskId', 'path', 'agent', 'status', 'sessionId', 'events', 'workdir', 'branch', 'base', 'model', 'reasoningEffort', 'accepted', 'cleaned', 'usage', 'usageCoverage', 'check', 'kind', 'title', 'updatedAt', 'yolo'] as const;
 export type TurnOptions = { prompt: string; cwd: string; yolo?: boolean; effort?: string; systemPrompt?: string; model?: string; resume?: string; signal: AbortSignal; canUseTool: (tool: string, input: Record<string, unknown>) => Promise<boolean> };
 export type Turn = (options: TurnOptions) => AsyncIterable<any>;
 
 // Optional hard limits from the environment; unset means no limit. OLAV_TASKS_MAX_BUDGET_USD / OLAV_TASKS_MAX_TURNS cap one turn.
 // OLAV_TASKS_SETTING_SOURCES=project (or user,project,local; none = isolated) limits which settings/CLAUDE.md the agent loads; unset = SDK default (all).
 const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
-const codexEfforts = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const codexEfforts = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'];
 const positive = (name: string) => { const value = Number(process.env[name]); return Number.isFinite(value) && value > 0 ? value : undefined; };
 export const caps = () => {
   const budget = positive('OLAV_TASKS_MAX_BUDGET_USD'); const turns = positive('OLAV_TASKS_MAX_TURNS');
@@ -52,14 +53,16 @@ export const roleAgents = () => {
 export const claudeTurn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, model, resume, signal, canUseTool }) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const abortController = new AbortController();
-  signal.addEventListener('abort', () => abortController.abort(), { once: true });
+  const onAbort = () => abortController.abort();
+  signal.addEventListener('abort', onAbort, { once: true });
+  if (signal.aborted) onAbort();
   // Claude reports the whole session's spend (including subagents) on each result; take the latest, do not sum.
   const reported = (m: any): Reported => {
     const models = Object.values<any>(m.modelUsage ?? {});
     const sum = (key: string) => models.reduce((total, item) => total + (item[key] ?? 0), 0);
     return { cost_usd: m.total_cost_usd, input: sum('inputTokens'), output: sum('outputTokens'), cache_read: sum('cacheReadInputTokens'), cache_write: sum('cacheCreationInputTokens'), cumulative: true };
   };
-  for await (const message of query({
+  try { for await (const message of query({
     prompt,
     options: {
       cwd, abortController, allowedTools: ['Read', 'Grep', 'Glob'], agents: roleAgents(), ...caps(), ...(systemPrompt ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt } } : {}), ...(model ? { model } : {}), ...(claudeEfforts.includes(effort ?? '') ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), ...(resume ? { resume } : {}), // YOLO = every permission check bypassed (the caller has already decided who may ask for it).
@@ -67,29 +70,37 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, yolo, effort, sy
       canUseTool: async (tool, input) => (await canUseTool(tool, input)) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Denied in Olav Tasks.' },
     },
   })) yield message.type === 'result' ? { ...message, reported: reported(message) } : message;
+  } finally { signal.removeEventListener('abort', onAbort); }
 };
 
 // Codex SDK has no per-tool approval callback (it wraps non-interactive `codex exec`), so a Codex run never reaches `blocked`.
 // Its safety boundary is the sandbox instead: writes only inside its working directory, no network, never asks. YOLO lifts both.
 export const codexTurn: Turn = async function* ({ prompt, cwd, yolo, effort, model, resume, signal }) {
   const { Codex } = await import('@openai/codex-sdk');
-  const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: yolo ? 'danger-full-access' : 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: !!yolo, ...(model ? { model } : {}), ...(codexEfforts.includes(effort ?? '') ? { modelReasoningEffort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' } : {}) } as const;
+  const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: yolo ? 'danger-full-access' : 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: !!yolo, ...(model ? { model } : {}), ...(codexEfforts.includes(effort ?? '') ? { modelReasoningEffort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent' } : {}) } as const;
   const codex = new Codex();
   const thread = resume ? codex.resumeThread(resume, options) : codex.startThread(options);
   const { events } = await thread.runStreamed(prompt, { signal });
+  const upstream = events[Symbol.asyncIterator]();
+  let completed = false;
   // Normalize to the same message shape the Claude turn yields, so AgentRuns stays agent-agnostic.
-  for await (const event of events) {
-    if (event.type === 'thread.started') yield { session_id: event.thread_id };
+  try { for await (const event of { [Symbol.asyncIterator]: () => upstream }) {
+    if (event.type === 'thread.started') {
+      if (typeof event.thread_id !== 'string' || !event.thread_id.trim()) throw new Error('Codex did not provide a usable thread ID.');
+      yield { session_id: event.thread_id };
+    }
     else if (event.type === 'item.completed') {
       const item = event.item;
       if (item.type === 'agent_message') yield { type: 'assistant', message: { content: [{ type: 'text', text: item.text }] } };
       else if (item.type === 'command_execution') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: item.command, exit_code: item.exit_code } }] } };
       else if (item.type === 'file_change') yield { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { changes: item.changes } }] } };
       else if (item.type === 'error') yield { type: 'assistant', message: { content: [{ type: 'text', text: `error: ${item.message}` }] } };
-    } else if (event.type === 'turn.completed') yield { type: 'result', result: 'ok', reported: { input: event.usage.input_tokens, output: event.usage.output_tokens, cache_read: event.usage.cached_input_tokens, cache_write: event.usage.cache_write_input_tokens, cumulative: false } satisfies Reported };
+    } else if (event.type === 'turn.completed') { completed = true; yield { type: 'result', result: 'ok', reported: { input: event.usage.input_tokens, output: event.usage.output_tokens, ...(Number.isFinite(event.usage.reasoning_output_tokens) && event.usage.reasoning_output_tokens >= 0 ? { reasoning_output: event.usage.reasoning_output_tokens } : {}), cache_read: event.usage.cached_input_tokens, cache_write: event.usage.cache_write_input_tokens, cumulative: false } satisfies Reported }; }
     else if (event.type === 'turn.failed') throw new Error(event.error.message);
     else if (event.type === 'error') throw new Error(event.message);
   }
+  if (!completed && !signal.aborted) throw new Error('Codex stream ended before turn.completed.');
+  } finally { await upstream.return?.(undefined); }
 };
 export const defaultTurns: Record<string, Turn> = { claude: claudeTurn, codex: codexTurn };
 
@@ -127,24 +138,29 @@ export class AgentRuns {
       try {
         const run = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Run;
         // A run that was in flight when the server stopped cannot continue its turn; it can still be resumed by message.
-        if (run.status === 'running' || run.status === 'blocked') run.status = 'stopped';
-        this.runs.set(run.taskId, { ...run, abort: new AbortController() });
+        if (run.status === 'running' || run.status === 'blocked') {
+          run.status = 'stopped';
+          run.usageCoverage = run.usage ? 'partial' : 'unknown';
+          if (run.usage) run.usage.reasoning_coverage = typeof run.usage.reasoning_output === 'number' ? 'partial' : 'unknown';
+        }
+        this.runs.set(run.taskId, { ...run, usageCoverage: run.usageCoverage ?? 'unknown', abort: new AbortController() });
       } catch { /* ignore unreadable run file */ }
     }
   }
-  list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage, kind, title, updatedAt, path }) => ({ taskId, agent, status, kind: kind ?? 'task', title: title ?? taskId, updatedAt: updatedAt ?? null, ...(path ? { path } : {}), ...(usage ? { usage } : {}), ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
+  list() { return [...this.runs.values()].map(({ taskId, agent, status, branch, accepted, usage, usageCoverage, kind, title, updatedAt, path }) => ({ taskId, agent, status, kind: kind ?? 'task', title: title ?? taskId, updatedAt: updatedAt ?? null, ...(path ? { path } : {}), ...(usage ? { usage } : {}), usageCoverage: usageCoverage ?? 'unknown', ...(branch ? { branch } : {}), ...(accepted ? { accepted } : {}) })); }
   get(taskId: string, since = 0) {
     const run = this.run(taskId);
-    return { taskId, yolo: !!run.yolo, kind: run.kind ?? 'task', title: run.title ?? taskId, agent: run.agent, status: run.status, model: run.model ?? null, usage: run.usage ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
+    return { taskId, yolo: !!run.yolo, kind: run.kind ?? 'task', title: run.title ?? taskId, agent: run.agent, status: run.status, model: run.model ?? null, reasoningEffort: run.reasoningEffort ?? null, usage: run.usage ?? null, usageCoverage: run.usageCoverage ?? 'unknown', persistenceError: run.persistenceError ?? null, check: run.check ?? null, branch: run.branch, isolated: !!run.branch, accepted: !!run.accepted, cleaned: !!run.cleaned, events: run.events.filter(event => event.seq > since), ...(run.pending ? { pending: { id: run.pending.id, tool: run.pending.tool } } : {}) };
   }
   private active(taskId: string) { const status = this.runs.get(taskId)?.status; return status === 'running' || status === 'blocked'; }
   // A free conversation: not tied to a task; the agent works in the project root like a normal terminal session.
-  chat(requested: unknown, text: unknown, yolo = false) {
+  chat(requested: unknown, text: unknown, yolo = false, reasoningEffort?: unknown) {
     const agent = typeof requested === 'string' && this.turns[requested] ? requested : undefined;
     if (!agent) throw new ApiError(400, `agent must be one of: ${Object.keys(this.turns).join(', ')}.`);
     if (typeof text !== 'string' || !text.trim()) throw new ApiError(400, 'text must be nonempty.');
+    if (reasoningEffort !== undefined && (agent !== 'codex' || typeof reasoningEffort !== 'string' || !codexEfforts.includes(reasoningEffort))) throw new ApiError(400, 'reasoningEffort must be a supported Codex reasoning value.');
     const id = `chat-${randomUUID().slice(0, 8)}`;
-    const run: Run = { taskId: id, path: '', kind: 'chat', title: text.trim().slice(0, 60), agent, status: 'running', events: [], workdir: this.root, abort: new AbortController() };
+    const run: Run = { taskId: id, path: '', kind: 'chat', title: text.trim().slice(0, 60), agent, status: 'running', events: [], workdir: this.root, ...(reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as string }), abort: new AbortController() };
     this.runs.set(id, run);
     this.go(run, text.trim(), undefined, yolo);
     return this.get(id);
@@ -154,6 +170,11 @@ export class AgentRuns {
     if (typeof text !== 'string' || !text.trim()) throw new ApiError(400, 'text must be nonempty.');
     if (run.cleaned) throw new ApiError(409, 'The worktree was cleaned up; start a new run to continue.');
     if (run.status === 'running' || run.status === 'blocked') throw new ApiError(409, 'A turn is already in progress.');
+    if (run.events.length && !run.sessionId) {
+      run.status = 'failed';
+      this.push(run, 'error', 'This conversation has history but no saved thread ID; it cannot be resumed. Start a new conversation.');
+      throw new ApiError(409, 'This conversation has no saved thread ID and cannot be resumed.');
+    }
     run.abort = new AbortController();
     run.status = 'running';
     this.go(run, text.trim(), undefined, yolo);
@@ -222,10 +243,18 @@ export class AgentRuns {
     return this.get(run.taskId);
   }
   private save(run: Run) {
+    const path = join(this.state, 'runs', `${run.taskId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`);
+    const temporary = `${path}.${randomUUID()}.tmp`;
     try {
       mkdirSync(join(this.state, 'runs'), { recursive: true });
-      writeFileSync(join(this.state, 'runs', `${run.taskId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`), JSON.stringify(Object.fromEntries(saved.map(key => [key, run[key]]))));
-    } catch { /* persistence is best effort */ }
+      writeFileSync(temporary, JSON.stringify(Object.fromEntries(saved.map(key => [key, run[key]]))));
+      renameSync(temporary, path);
+      run.persistenceError = undefined;
+    } catch {
+      try { rmSync(temporary, { force: true }); } catch { /* original save failure is enough */ }
+      run.persistenceError = 'Run state could not be saved. This conversation may not resume after a restart.';
+      throw new Error(run.persistenceError);
+    }
   }
   private run(taskId: unknown) {
     const run = typeof taskId === 'string' ? this.runs.get(taskId) : undefined;
@@ -233,21 +262,33 @@ export class AgentRuns {
     return run;
   }
   private record(run: Run, report: Reported) {
+    const hadUsage = !!run.usage;
     const before = run.usage ?? { input: 0, output: 0, cache_read: 0, cache_write: 0, turns: 0 };
-    const { cumulative, ...numbers } = report;
+    const coverage = run.usageCoverage;
+    const { cumulative, reasoning_output, ...numbers } = report;
+    const knownReasoning = typeof reasoning_output === 'number' && Number.isFinite(reasoning_output) && reasoning_output >= 0;
+    const priorReasoning = typeof before.reasoning_output === 'number' && Number.isFinite(before.reasoning_output) && before.reasoning_output >= 0 ? before.reasoning_output : undefined;
+    const reasoningTotal = cumulative ? (knownReasoning ? reasoning_output : priorReasoning) : priorReasoning === undefined ? (knownReasoning ? reasoning_output : undefined) : priorReasoning + (knownReasoning ? reasoning_output : 0);
+    const reasoningCoverage: UsageCoverage = reasoningTotal === undefined ? 'unknown' : !knownReasoning || (hadUsage && before.reasoning_coverage !== 'complete') || (coverage !== undefined && coverage !== 'complete') ? 'partial' : 'complete';
     run.usage = cumulative
-      ? { ...numbers, turns: before.turns + 1 }
-      : { ...(before.cost_usd !== undefined || numbers.cost_usd !== undefined ? { cost_usd: (before.cost_usd ?? 0) + (numbers.cost_usd ?? 0) } : {}), input: before.input + numbers.input, output: before.output + numbers.output, cache_read: before.cache_read + numbers.cache_read, cache_write: before.cache_write + numbers.cache_write, turns: before.turns + 1 };
+      ? { ...numbers, ...(reasoningTotal === undefined ? {} : { reasoning_output: reasoningTotal }), reasoning_coverage: reasoningCoverage, turns: before.turns + 1 }
+      : { ...(before.cost_usd !== undefined || numbers.cost_usd !== undefined ? { cost_usd: (before.cost_usd ?? 0) + (numbers.cost_usd ?? 0) } : {}), input: before.input + numbers.input, output: before.output + numbers.output, ...(reasoningTotal === undefined ? {} : { reasoning_output: reasoningTotal }), reasoning_coverage: reasoningCoverage, cache_read: before.cache_read + numbers.cache_read, cache_write: before.cache_write + numbers.cache_write, turns: before.turns + 1 };
+    run.usageCoverage = coverage === 'partial' || (coverage === 'unknown' && !hadUsage) ? 'partial' : coverage ?? 'complete';
   }
+  private markUsageGap(run: Run) { run.usageCoverage = run.usage ? 'partial' : 'unknown'; if (run.usage) run.usage.reasoning_coverage = typeof run.usage.reasoning_output === 'number' ? 'partial' : 'unknown'; }
   private push(run: Run, type: AgentEvent['type'], text: string, who: { role?: string; model?: string } = {}) { run.updatedAt = new Date().toISOString(); run.events.push({ seq: run.events.length + 1, type, text, at: run.updatedAt, ...(who.role ? { role: who.role } : {}), ...(who.model ? { model: who.model } : {}) }); this.save(run); }
   // `shown` is what the conversation displays for the user's turn when the prompt sent to the agent is a longer generated brief.
   private go(run: Run, prompt: string, shown?: string, yolo = false) {
     run.yolo = yolo;
-    this.push(run, 'user', shown ?? prompt);
+    try { this.push(run, 'user', shown ?? prompt); }
+    catch { run.status = 'failed'; this.markUsageGap(run); return; }
     void (async () => {
+      let completed = false;
+      let failure: unknown;
+      let iterator: AsyncIterator<any> | undefined;
       try {
-        for await (const message of this.turns[run.agent]({
-          prompt, cwd: run.workdir, yolo, effort: this.efforts[run.agent], resume: run.sessionId, signal: run.abort.signal,
+        iterator = this.turns[run.agent]({
+          prompt, cwd: run.workdir, yolo, effort: run.reasoningEffort ?? this.efforts[run.agent], model: run.model, resume: run.sessionId, signal: run.abort.signal,
           canUseTool: (tool, input) => new Promise<boolean>(resolve => {
             // A stop that arrives before the request exists (or while it waits) must never leave the run blocked.
             if (run.abort.signal.aborted) { resolve(false); return; }
@@ -259,8 +300,12 @@ export class AgentRuns {
             run.status = 'blocked';
             this.push(run, 'permission', `${tool} ${JSON.stringify(input).slice(0, 500)}`);
           }),
-        })) {
-          if (message.session_id) run.sessionId = message.session_id;
+        })[Symbol.asyncIterator]();
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) break;
+          const message = next.value;
+          if (message.session_id) { run.sessionId = message.session_id; this.save(run); }
           if (message.type === 'assistant') for (const block of message.message?.content ?? []) {
             // Subagent messages carry parent_tool_use_id; map it back to the role named when the main agent spawned it.
             run.spawned ??= new Map();
@@ -273,15 +318,25 @@ export class AgentRuns {
           } else if (message.type === 'result') {
             if (message.reported) this.record(run, message.reported);
             // Error results (budget, turn limit, execution error) are shown as errors; the run stays resumable by message.
-            if (typeof message.subtype === 'string' && message.subtype.startsWith('error')) this.push(run, 'error', message.subtype);
-            else this.push(run, 'result', message.result ?? message.subtype ?? 'done');
+            if (typeof message.subtype === 'string' && message.subtype.startsWith('error')) { this.push(run, 'error', message.subtype); throw new Error(message.subtype); }
+            else { completed = true; this.push(run, 'result', message.result ?? message.subtype ?? 'done'); }
           }
         }
-        if (!run.abort.signal.aborted) await this.check(run).catch(error => this.push(run, 'error', `check could not run: ${error instanceof Error ? error.message : String(error)}`));
-        run.status = run.abort.signal.aborted ? 'stopped' : 'idle'; this.save(run);
+        if (!completed && !run.abort.signal.aborted) throw new Error('Agent stream ended without a successful result.');
+        if (completed && !run.abort.signal.aborted) await this.check(run).catch(error => this.push(run, 'error', `check could not run: ${error instanceof Error ? error.message : String(error)}`));
       } catch (error) {
-        run.status = run.abort.signal.aborted ? 'stopped' : 'failed';
-        if (run.status === 'failed') this.push(run, 'error', error instanceof Error ? error.message : String(error)); else this.save(run);
+        failure = error;
+      } finally {
+        run.pending?.resolve(false);
+        run.pending = undefined;
+        try { await iterator?.return?.(undefined); } catch (error) { failure ??= error; }
+        run.status = run.abort.signal.aborted ? 'stopped' : failure ? 'failed' : 'idle';
+        if (!completed) this.markUsageGap(run);
+        if (failure && run.status === 'failed') {
+          const at = new Date().toISOString(); run.updatedAt = at;
+          run.events.push({ seq: run.events.length + 1, type: 'error', text: failure instanceof Error ? failure.message : String(failure), at });
+        }
+        try { this.save(run); } catch { if (!run.abort.signal.aborted && run.status !== 'stopped') run.status = 'failed'; }
       }
     })();
   }
