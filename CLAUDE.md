@@ -7,7 +7,7 @@
 - 名称为 Olav Tasks；目录为 `olav-tasks`。npm 包候选名与 CLI 候选入口均为 `olav-tasks`，发布前确认名称可用性。
 - 第一版：Kanban、文件管理、规划/编写/整理 Markdown skills，以及 docs-kb 的 Markdown 检索与长文定位能力，通过一个 npm 包分发。2026-09-30 补入轻量 docs-kb 与规划 skill，范围为 Node 本地检索及显式目录 skill 安装；交付状态见对应任务。
 - 第一版验收包含本机真实项目管理：先管理本项目，再由用户选择现有项目目录接入。
-- 2026-10-03 用户授权开发聊天：页面右侧可折叠对话栏（图标按钮：新建/历史/折叠，开关在视图页签行；Claude 与 Codex 经本机已认证的 SDK 在项目根目录工作；发送旁有 YOLO 选项，开启后绕过所有权限确认），界面为英文。局域网默认可用（`OLAV_TASKS_AGENT_LAN=0` 可收回），YOLO 仅服务所在机器可用（`OLAV_TASKS_ALLOW_LAN_YOLO=1` 才放开）；Claude 权限请求由网页逐条批准，会话仅保存在项目外的 `<父目录>/.olav-tasks-state/<项目名>/`；Claude 预置 explorer/researcher/implementer/reviewer 四个子 agent 角色（各自固定档位、medium 推理强度与工具白名单），可选预算/回合上限与用量/估算费用显示。2026-10-03 用户决定删除"从任务页或接口启动任务运行"（含就绪任务批量开始）：任务运行不再能被创建，此前版本创建的运行仍可在任务页审阅（检查、diff、验收、清理 worktree），`done` 仍只由人点验收设置。pi 适配与测试输出面板仍留到后续版本。
+- 2026-10-03 用户授权开发聊天：页面右侧可折叠对话栏（图标按钮：新建/历史/折叠，对话开关与五个视图页签合为顶栏居中的一组，顶栏左侧为 Olav SVG 图标（取自 olav-os 品牌评审 Option 01，与 favicon 一致）；Claude 与 Codex 经本机已认证的 SDK 在项目根目录工作；发送旁有 YOLO 选项，开启后绕过所有权限确认），界面为英文。局域网默认可用（`OLAV_TASKS_AGENT_LAN=0` 可收回），YOLO 仅服务所在机器可用（`OLAV_TASKS_ALLOW_LAN_YOLO=1` 才放开）；Claude 权限请求由网页逐条批准，会话仅保存在项目外的 `<父目录>/.olav-tasks-state/<项目名>/`；Claude 预置 explorer/researcher/implementer/reviewer 四个子 agent 角色（各自固定档位、medium 推理强度与工具白名单），可选预算/回合上限与用量/估算费用显示。2026-10-03 用户决定删除"从任务页或接口启动任务运行"（含就绪任务批量开始）：任务运行不再能被创建，此前版本创建的运行仍可在任务页审阅（检查、diff、验收、清理 worktree），`done` 仍只由人点验收设置。pi 适配与测试输出面板仍留到后续版本。
 - 不引入工单系统；第一版无组织、岗位、招聘、审批工作流或云同步。
 
 ## 架构原则

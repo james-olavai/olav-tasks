@@ -61,7 +61,7 @@ The app checks file metadata every two seconds for external changes; it is not a
 
 ## Chat dock (optional)
 
-A collapsible chat on the right of every page (open or collapse it with the bubble button on the view-tab row, or the chevron in the dock) talks to the Claude Agent SDK or Codex SDK authenticated on the machine running the server. The icons start a new conversation, show the history, and collapse the dock; the Claude/Codex switch applies to a new conversation. Agents work in the project root like a normal terminal session: Claude asks you to approve each tool call in the dock (reads are allowed), Codex runs in a sandbox that can write inside the project root and has no network. The **YOLO** option next to Send bypasses every permission prompt for the next message (Claude `bypassPermissions`; Codex `danger-full-access` with network). 
+A collapsible chat on the right of every page (open or collapse it with the bubble button in the centred tab group of the top bar, or the chevron in the dock) talks to the Claude Agent SDK or Codex SDK authenticated on the machine running the server. The icons start a new conversation, show the history, and collapse the dock; the Claude/Codex switch applies to a new conversation. Agents work in the project root like a normal terminal session: Claude asks you to approve each tool call in the dock (reads are allowed), Codex runs in a sandbox that can write inside the project root and has no network. The **YOLO** option next to Send bypasses every permission prompt for the next message (Claude `bypassPermissions`; Codex `danger-full-access` with network). 
 
 ## Agent settings and earlier task runs
 
