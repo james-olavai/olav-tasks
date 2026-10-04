@@ -115,8 +115,7 @@ node dist/cli.js skills uninstall olav-tasks-plan --dir /你的/Agent技能目�
 ## 文档入口
 
 - [BACKLOG.md](BACKLOG.md)：开发顺序、任务入口和第一版验收场景。
-- [CLAUDE.md](CLAUDE.md)：产品范围与长期架构边界，所有开发 Agent 均适用。
-- [AGENTS.md](AGENTS.md)：开发协作、派工和验收方式。
+- [AGENTS.md](AGENTS.md)：产品范围、长期架构边界、开发协作、派工和验收方式，是所有开发 Agent 的唯一规则文件；`CLAUDE.md` 只导入它，Claude Code 与 Codex 读的是同一份。
 - [任务文件约定](docs/task-format.md)：看板和 skills 共用的 Markdown 契约。
 - [首批移植清单](docs/migration-plan.md)：代码来源、许可、调用边界与界面方案。
 

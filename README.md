@@ -153,8 +153,7 @@ The archive contains the built web app, the CLI, license notices, this README an
 ## Project documents
 
 - [Backlog](BACKLOG.md): development sequence and task index.
-- [Product and architecture boundaries](CLAUDE.md).
-- [Development collaboration](AGENTS.md).
+- [Development rules, product scope and boundaries](AGENTS.md): the single rules file for every development agent. `CLAUDE.md` only imports it, so Claude Code and Codex read the same content.
 - [Task file format](docs/task-format.md).
 - [Initial code migration plan](docs/migration-plan.md).
 - [Local version acceptance](docs/local-version-acceptance.md).

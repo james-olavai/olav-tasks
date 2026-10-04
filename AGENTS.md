@@ -1,10 +1,41 @@
-# Olav Tasks 开发协作
+# Olav Tasks 开发规则
+
+本文件是 Claude Code、Codex 等所有开发 Agent 的唯一规则来源（`CLAUDE.md` 只导入它）。任务进度查 `BACKLOG.md` 及其链接的任务文件；用法与配置见 `README.md`。
 
 ## 开工前
 
-- 先读 `CLAUDE.md`、`BACKLOG.md` 与相关任务文件；涉及看板数据时读 `docs/task-format.md`。
+- 先读本文件、`BACKLOG.md` 与相关任务文件；涉及看板数据时读 `docs/task-format.md`。
 - 先检查工作目录中的现有改动，保留用户与其他 Agent 的工作。项目尚未初始化 Git 时如实说明，不能声称已有 Git diff 或提交。
 - `../olav-os` 作为按需读取的组件来源和真实验收项目；没有用户要求时不修改它。2026-09-30 用户明确要求本地安装、改造 backlog 并启动前端测试，授权此次新增开发看板入口和任务、项目级 skills、安装/启动配置与相应文档，不修改 Studio 运行时代码。
+
+## 产品范围与核心原则
+
+- 名称为 Olav Tasks；目录为 `olav-tasks`。npm 包候选名与 CLI 候选入口均为 `olav-tasks`，发布前确认名称可用性。
+- **核心原则（2026-10-04 用户明确）：AI 管理项目，人通过与 AI 对话来修改，网页只读。** 不做网页上的新建/编辑/拖拽/表单、账号权限、评论通知、自定义工作流；缺口按“让 AI 可靠地当项目经理”来补：安全改状态的命令（`tasks claim/new/validate`）、对话自带项目经理规则与 `PROJECT.md`/看板摘要、`tasks digest` 汇报、只读 Activity 视图。
+- 第一版：Kanban、文件管理、规划/编写/整理 Markdown skills，以及 docs-kb 的 Markdown 检索与长文定位能力，通过一个 npm 包分发。2026-09-30 补入轻量 docs-kb 与规划 skill，范围为 Node 本地检索及显式目录 skill 安装；交付状态见对应任务。
+- 第一版验收包含本机真实项目管理：先管理本项目，再由用户选择现有项目目录接入。
+- 不引入工单系统；第一版无组织、岗位、招聘、审批工作流或云同步。
+- 对话栏（2026-10-03 用户授权）：页面右侧可折叠，经本机已认证的 Claude/Codex SDK 在项目根目录工作；新对话以项目经理身份开始（规则加 `PROJECT.md` 与看板摘要，`OLAV_TASKS_PM_CONTEXT=0` 关闭）；发送旁的 YOLO 选项绕过所有权限确认。局域网默认可用（`OLAV_TASKS_AGENT_LAN=0` 收回），YOLO 仅服务所在机器可用（`OLAV_TASKS_ALLOW_LAN_YOLO=1` 才放开）；Claude 的权限请求在页面逐条批准；会话保存在项目外的 `<父目录>/.olav-tasks-state/<项目名>/`；Claude 预置 explorer/researcher/implementer/reviewer 四个子 agent 角色（固定档位、medium 推理强度、工具白名单）。全部环境变量与用法见 `README.md`。
+- 任务运行不再能被创建（2026-10-03 用户决定删除“从任务页或接口启动任务运行”）；此前版本创建的运行仍可在任务页审阅（检查、diff、验收、清理 worktree），`done` 仍只由人点验收设置。pi 适配与测试输出面板仍留到后续版本。
+- 界面为英文：顶栏居中是一组图标（六个视图加对话开关），左侧为 Olav SVG 图标（取自 olav-os 品牌评审 Option 01，与 favicon 一致）。
+
+## 架构原则
+
+- Markdown 是任务与文档的唯一事实源。看板与文件管理是同一目录的两种视图，任务状态回写原文件。
+- `tasks ready` 只返回完整扫描与有效任务图上的候选快照；实际执行、独立 QA 和状态验收仍由活跃代理会话按项目权限完成，网页不提供执行按钮。
+- 本地服务读取用户显式选定的项目根目录，默认仅监听 loopback。跨目录访问、符号链接逃逸、浏览器任意来源写入等边界在文件服务中落实。
+- 普通 Markdown 无需迁移或补字段；只有明确符合任务文件契约的文件进入看板。未知字段和正文不得因拖动或编辑被静默丢弃。
+- 与编辑器或 Agent 并发修改时检测冲突并提供重新读取，不能静默覆盖外部更新。
+- npm 包包含构建后的网页、本地服务、CLI 与 skills；运行不依赖 Olav Studio、OpenOPC、Bun 或用户机器上的参考克隆。
+- npm 安装负责分发 skills 文件；独立的显式 CLI 操作将 skills 安装到支持的 Agent 发现目录。目标目录、覆盖与卸载规则需在实现任务中明确。
+- 整理已有项目以新增索引与任务入口为起点；不自动批量搬动文件、重命名或重写既有文档。
+
+## 技术基线
+
+- Node.js 本地服务与 CLI；React + Vite + TypeScript 网页，按需复用 Studio 的 shadcn/Radix 组件与视觉 token。
+- 一张卡片对应一个带 YAML frontmatter 的 Markdown 文件；默认状态为 `todo`、`in-progress`、`done`，契约见 `docs/task-format.md`。
+- 项目通过 CLI 参数选择；每个实例管理一个根目录，可分别启动多个实例。
+- 待核实的方案选择记录到对应任务，不把候选写成已交付能力。测试用 `npm test`。
 
 ## 派工
 
@@ -15,7 +46,7 @@
 
 ## 文档与状态
 
-- `CLAUDE.md` 只写长期边界；`BACKLOG.md` 写计划与任务入口；每项任务的状态只存在其 Markdown frontmatter。
+- 本文件只写长期边界与协作规则；`BACKLOG.md` 写计划与任务入口；每项任务的状态只存在其 Markdown frontmatter。
 - 开始执行时将任务置为 `in-progress`；只有验收条件满足且记录了验证依据才能置为 `done`。未验收和受阻任务保留真实状态，在正文说明原因。
 - 完成任务时记录交付文件、验证依据及已知限制。实现、验证、发布是不同事实，不得混写。
 - 新增任务使用稳定 ID，补充背景、范围、依赖和可观察的验收条件，并加入 backlog 索引。
