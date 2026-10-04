@@ -8,11 +8,11 @@ Olav Tasks is project management where **an AI manages the project and people ch
 - **The AI operates the board.** It claims, creates, updates and validates tasks through small commands that make each change atomic and checked, and it reports to you: what needs your decision first, then risks, progress and next steps.
 - **People talk, and can always see.** The page never edits tasks. You ask in the chat dock; the Activity view shows exactly what changed, from git.
 
-It runs as a local Node.js application, works on any project directory (software or not), and is installed from an npm package archive.
+It runs as a local Node.js application, works on any project directory (software or not), and is installed from npm.
 
 ## Contents
 
-- [Run it](#run-it) · [The board](#the-board) · [Commands for the AI project manager](#commands-for-the-ai-project-manager) · [Chat dock](#chat-dock) · [Settings](#settings) · [Search](#search-project-documentation) · [Skills](#skills) · [Install](#install-from-a-package-archive) · [Project documents](#project-documents)
+- [Run it](#run-it) · [The board](#the-board) · [Commands for the AI project manager](#commands-for-the-ai-project-manager) · [Chat dock](#chat-dock) · [Settings](#settings) · [Search](#search-project-documentation) · [Skills](#skills) · [Install](#install) · [Project documents](#project-documents)
 
 ## Run it
 
@@ -72,7 +72,7 @@ All accept `--json`. `claim` and `new` exit non-zero when they refuse and `valid
 
 ## Chat dock
 
-A collapsible chat on the right talks to the **Claude Agent SDK** or the **Codex SDK** authenticated on the machine running the server (install the one you use; see [Install](#install-from-a-package-archive)). The bubble button in the top bar and the chevron in the dock open and collapse it; the icons start a new conversation, show the history and collapse it; the Claude/Codex switch applies to a new conversation, and Codex also offers a reasoning-effort picker.
+A collapsible chat on the right talks to the **Claude Agent SDK** or the **Codex SDK** authenticated on the machine running the server (install the one you use; see [Install](#install)). The bubble button in the top bar and the chevron in the dock open and collapse it; the icons start a new conversation, show the history and collapse it; the Claude/Codex switch applies to a new conversation, and Codex also offers a reasoning-effort picker.
 
 - Agents work in the **project root** like a normal terminal session. Claude asks you to approve each tool call in the dock (reads are allowed); Codex runs in a sandbox that can write inside the project root and has no network.
 - **YOLO** (the checkbox beside Send) bypasses every permission prompt for the next message: Claude `bypassPermissions`, Codex `danger-full-access` with network. Use it deliberately.
@@ -138,17 +138,17 @@ node dist/cli.js skills uninstall olav-tasks-plan --dir /path/to/agent/skills
 
 Installation needs an explicit directory and never touches global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different content or a symlink, and uninstall only removes a directory that exactly matches the installed skill.
 
-## Install from a package archive
+## Install
 
-Olav Tasks is not published to the public npm registry. To create and install a local archive:
+Olav Tasks is published on npm as [`olav-tasks`](https://www.npmjs.com/package/olav-tasks) (MIT). Requires Node.js 22.12 or later.
 
 ```bash
-npm pack
-npm install /path/to/olav-tasks-0.1.0.tgz
+npx olav-tasks --help                              # try it without installing
+npm install olav-tasks                             # per project (use -g for a global install)
 ./node_modules/.bin/olav-tasks tasks ready /path/to/project --json
 ```
 
-The archive contains the built web app, the CLI, license notices, this README and the skills (about 220 kB; installing it adds one dependency, `yaml`). Running Olav Tasks needs no Python, database or other service.
+The package contains the built web app, the CLI, license notices, this README and the skills (about 220 kB; installing it adds one dependency, `yaml`). Running Olav Tasks needs no Python, database or other service. To work from a local checkout instead, use `npm pack` and install the resulting `.tgz`.
 
 **The chat dock needs an agent SDK, which is optional.** The Claude and Codex SDKs bundle native binaries (about 235 MB and 430 MB), so they are optional peer dependencies and are not installed with Olav Tasks. Install the one you use next to Olav Tasks (add `-g` if Olav Tasks is installed globally), then start a new conversation; they use the logins you already have:
 

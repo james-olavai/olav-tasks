@@ -18,7 +18,7 @@
 
 **给 AI 项目经理的命令**：`tasks list`、`tasks ready`（只读快照）；`tasks claim <目录> <ID> --as agent:x`（原子写入进行中与负责人，未就绪或被他人持有即失败）；`tasks new --title …`（分配下一个未占用 ID，独占创建，标题始终加引号）；`tasks validate`（有诊断时退出码为 1）；`tasks digest`（等人拍板、过期、陈旧、进度、关键路径）。
 
-本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理、执行、汇报与 docs-kb 六个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)。npm 包尚未公开发布，包名尚未核实可用性。
+本地文件树、Markdown/GFM 预览、新建文件/文件夹、Markdown 移动/重命名/删除、版本冲突及外部变化刷新已经实现。配套规划、编写、整理、执行、汇报与 docs-kb 六个 skills。之前版本的安装及真实项目验收见 [本地版本验收](docs/local-version-acceptance.md)。已以 MIT 发布到 npm：`olav-tasks`。
 
 ## 本地开发与启动
 
@@ -79,14 +79,15 @@ node dist/cli.js skills install docs-kb --dir /你的/Agent技能目录
 
 `skills install` 将指定内置技能复制到显式目标下的同名目录，不会自动发现或修改全局 Agent 配置。重复安装相同内容不变，已有不同内容或符号链接时拒绝覆盖。docs-kb 安装后仍需要可用的 `olav-tasks` CLI；只有 Markdown 检索，不含 PDF/Office/OCR 转换、自动分类或文档写入。
 
-本地 npm 包安装（不是公开 registry 安装）：
+从 npm 安装（Node.js ≥ 22.12）：
 
 ```bash
-npm pack
-# 在选定安装目录运行，替换下面路径为实际生成的 tarball
-npm install /绝对路径/olav-tasks-0.1.0.tgz
+npx olav-tasks --help                  # 免安装试用
+npm install olav-tasks                 # 项目内安装（全局加 -g）
 ./node_modules/.bin/olav-tasks docs search /你的/项目目录 "关键词" --json
 ```
+
+对话栏需要自行安装其一：`npm install @anthropic-ai/claude-agent-sdk` 或 `@openai/codex-sdk`（可选依赖，详见英文 README）。从本地源码安装可用 `npm pack` 后装生成的 `.tgz`。
 
 网页构建产物、CLI 和 `skills/` 目录均随包分发；无需 Python、PyYAML、数据库或 Studio 服务。
 
