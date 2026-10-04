@@ -72,7 +72,7 @@ All accept `--json`. `claim` and `new` exit non-zero when they refuse and `valid
 
 ## Chat dock
 
-A collapsible chat on the right talks to the **Claude Agent SDK** or the **Codex SDK** authenticated on the machine running the server. The bubble button in the top bar and the chevron in the dock open and collapse it; the icons start a new conversation, show the history and collapse it; the Claude/Codex switch applies to a new conversation, and Codex also offers a reasoning-effort picker.
+A collapsible chat on the right talks to the **Claude Agent SDK** or the **Codex SDK** authenticated on the machine running the server (install the one you use; see [Install](#install-from-a-package-archive)). The bubble button in the top bar and the chevron in the dock open and collapse it; the icons start a new conversation, show the history and collapse it; the Claude/Codex switch applies to a new conversation, and Codex also offers a reasoning-effort picker.
 
 - Agents work in the **project root** like a normal terminal session. Claude asks you to approve each tool call in the dock (reads are allowed); Codex runs in a sandbox that can write inside the project root and has no network.
 - **YOLO** (the checkbox beside Send) bypasses every permission prompt for the next message: Claude `bypassPermissions`, Codex `danger-full-access` with network. Use it deliberately.
@@ -148,7 +148,16 @@ npm install /path/to/olav-tasks-0.1.0.tgz
 ./node_modules/.bin/olav-tasks tasks ready /path/to/project --json
 ```
 
-The archive contains the built web app, the CLI, license notices, this README and the skills. The Claude and Codex SDKs are installed as dependencies but only loaded when you start a conversation, and they use the logins you already have. Running Olav Tasks needs no Python, database or other service.
+The archive contains the built web app, the CLI, license notices, this README and the skills (about 220 kB; installing it adds one dependency, `yaml`). Running Olav Tasks needs no Python, database or other service.
+
+**The chat dock needs an agent SDK, which is optional.** The Claude and Codex SDKs bundle native binaries (about 235 MB and 430 MB), so they are optional peer dependencies and are not installed with Olav Tasks. Install the one you use next to Olav Tasks (add `-g` if Olav Tasks is installed globally), then start a new conversation; they use the logins you already have:
+
+```bash
+npm install @anthropic-ai/claude-agent-sdk   # Claude conversations
+npm install @openai/codex-sdk                # Codex conversations
+```
+
+Without it the board, CLI and skills work normally, and a conversation fails with a message that names the package to install. The Claude Agent SDK is Anthropic software under Anthropic's own terms (not MIT), which is another reason it is opt-in.
 
 ## Project documents
 

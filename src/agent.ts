@@ -52,8 +52,14 @@ export const roleAgents = () => {
     reviewer: { description: 'Independent read-only review of the actual diff and acceptance evidence. Never edits files.', prompt: 'You independently review the diff against the acceptance criteria. Do not edit files. Report failures with evidence, not opinions.', tools: ['Read', 'Grep', 'Glob', 'Bash'], model: model('reviewer', 'opus'), effort: effort('reviewer') },
   };
 };
+// The SDKs are optional peer dependencies (their native binaries are hundreds of MB), so a missing one must say how to get it.
+export const missingSdk = (pkg: string, label: string) => (error: unknown): never => {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') throw new Error(`${label} conversations need the optional package ${pkg}. Install it next to olav-tasks (npm install ${pkg}, or -g if olav-tasks is global) and start a new conversation.`);
+  throw error;
+};
 export const claudeTurn: Turn = async function* ({ prompt, cwd, yolo, effort, systemPrompt, model, resume, signal, canUseTool }) {
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  const { query } = await import('@anthropic-ai/claude-agent-sdk').catch(missingSdk('@anthropic-ai/claude-agent-sdk', 'Claude'));
   const abortController = new AbortController();
   const onAbort = () => abortController.abort();
   signal.addEventListener('abort', onAbort, { once: true });
@@ -78,7 +84,7 @@ export const claudeTurn: Turn = async function* ({ prompt, cwd, yolo, effort, sy
 // Codex SDK has no per-tool approval callback (it wraps non-interactive `codex exec`), so a Codex run never reaches `blocked`.
 // Its safety boundary is the sandbox instead: writes only inside its working directory, no network, never asks. YOLO lifts both.
 export const codexTurn: Turn = async function* ({ prompt, cwd, yolo, effort, model, resume, signal }) {
-  const { Codex } = await import('@openai/codex-sdk');
+  const { Codex } = await import('@openai/codex-sdk').catch(missingSdk('@openai/codex-sdk', 'Codex'));
   const options = { workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: yolo ? 'danger-full-access' : 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: !!yolo, ...(model ? { model } : {}), ...(codexEfforts.includes(effort ?? '') ? { modelReasoningEffort: effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent' } : {}) } as const;
   const codex = new Codex();
   const thread = resume ? codex.resumeThread(resume, options) : codex.startThread(options);
