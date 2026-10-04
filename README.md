@@ -2,35 +2,50 @@
 
 [简体中文](README.zh-CN.md)
 
-Olav Tasks is project management where **an AI manages the project and people change it by talking to it.** The project lives in plain Markdown files; a read-only web page shows the board, and a chat dock puts you in conversation with the Claude or Codex already signed in on your machine. There is no database, no hosted service and no account.
+**Project management where an AI runs the project and you steer it by talking.** Point it at any folder of Markdown files. You get a board, a file browser, a chat with the Claude or Codex already signed in on your machine, and a set of skills that make an agent a dependable project manager. No database, no server to host, no account.
 
-- **Markdown is the source of truth.** Tasks are Markdown files with YAML frontmatter, in the same directory as your documents. Agents and people use the files with the tools they already have.
-- **The AI operates the board.** It claims, creates, updates and validates tasks through small commands that make each change atomic and checked, and it reports to you: what needs your decision first, then risks, progress and next steps.
-- **People talk, and can always see.** The page never edits tasks. You ask in the chat dock; the Activity view shows exactly what changed, from git.
+```bash
+npx olav-tasks /path/to/your/project      # open http://127.0.0.1:4318
+```
 
-It runs as a local Node.js application, works on any project directory (software or not), and is installed from npm.
+## Why use it
+
+- **Lightweight.** One small npm package (about 220 kB, one dependency). It runs locally on Node.js, with no Docker, database, search index or cloud service. Your project can be code, writing, research, or anything else kept in files.
+- **Your files are the system of record.** A task is a Markdown file with a few lines of frontmatter, next to your documents. The board is only a view of those files, so git history, diffs, editors and every agent keep working. Ordinary Markdown needs no migration, and nothing is locked in: delete the tool and the files are still yours.
+- **The AI is the project manager; the page is read-only.** You say what you want in the chat dock: plan this, start the next task, what is blocked? The agent claims, creates and validates tasks through small checked commands, then reports what needs your decision first, then risks, progress and next steps. The Activity view shows exactly what changed, straight from git.
+- **Fast document search with no index.** `docs search` finds passages in your Markdown by path and line number and returns a small, capped excerpt, so an agent reads a few hundred characters instead of whole files. It uses literal phrase matching: no embeddings, no vector store, nothing to build or keep in sync.
+- **A development loop for agents.** The bundled skills take work from idea to done: plan it into tasks with dependencies, pick what is ready, implement, check with an independent review, repair, and accept. A task becomes `done` only with recorded evidence.
+- **Safe for several agents.** `claim` is a locked, version-checked write, so two agents never take the same task. Concurrent creators never share an ID, and `validate` catches broken dependencies before they reach the board.
+- **Works with your agent, not instead of it.** Use the chat dock, or let Claude Code, Codex or any agent call the CLI and load the skills directly.
+
+## How it works
+
+```
+ you  ──talk──▶  chat dock / your agent ──CLI + skills──▶  Markdown files  ──▶  read-only board
+ plan ▸ ready ▸ claim ▸ implement ▸ independent QA ▸ repair ▸ accept ▸ report
+```
+
+1. Put a `PROJECT.md` (goals, priorities, working agreements) at the project root.
+2. Ask the agent to plan: it writes task files with priorities and dependencies.
+3. Ask it to work: it takes ready tasks, does them, has the result checked separately, and marks them done with evidence.
+4. Ask for a report any time: it summarises the board from `tasks digest` and tells you what is waiting on you.
+
+## Quick start
+
+Requires Node.js 22.12 or later.
+
+```bash
+npx olav-tasks /path/to/project                                # the board and chat dock
+npx olav-tasks tasks ready /path/to/project --json             # what an agent can start now
+npx olav-tasks docs search /path/to/project "acceptance"       # find passages by path and line
+npx olav-tasks skills install olav-tasks-plan --dir ~/.claude/skills   # give your agent the skills
+```
+
+The chat dock needs one agent SDK (optional, so the install stays small): `npm install @anthropic-ai/claude-agent-sdk` or `npm install @openai/codex-sdk`. Everything else works without it. See [Install](#install).
 
 ## Contents
 
-- [Run it](#run-it) · [The board](#the-board) · [Commands for the AI project manager](#commands-for-the-ai-project-manager) · [Chat dock](#chat-dock) · [Settings](#settings) · [Search](#search-project-documentation) · [Skills](#skills) · [Install](#install) · [Project documents](#project-documents)
-
-## Run it
-
-Requirements: Node.js 22.12 or later, and npm.
-
-```bash
-npm ci
-npm run dev -- /path/to/project     # web app on http://127.0.0.1:4317, API on 4318
-```
-
-`OLAV_TASKS_WEB_PORT` and `OLAV_TASKS_API_PORT` change the development ports. To build and run the local app:
-
-```bash
-npm run typecheck && npm run build
-npm start -- /path/to/project --port 4318
-```
-
-The production server needs an explicit project directory (`--help` and `--version` work with `node dist/cli.js`). To listen on all IPv4 interfaces pass `--host 0.0.0.0`; the server checks the Host header, same-origin requests and project paths, but **has no login**, so use it only on a network you trust (see [LAN access](#lan-access-and-yolo)). `npm test` runs the unit tests and the agent check with fake agents (no network, no credentials).
+- [The board](#the-board) · [Commands for the AI project manager](#commands-for-the-ai-project-manager) · [Chat dock](#chat-dock) · [Settings](#settings) · [Search](#search-project-documentation) · [Skills](#skills) · [Install](#install) · [Develop from source](#develop-from-source) · [Project documents](#project-documents)
 
 ## The board
 
@@ -111,8 +126,8 @@ Tasks can no longer be started as separate runs from the page or the API; conver
 ## Search project documentation
 
 ```bash
-node dist/cli.js docs search . "acceptance" --json
-node dist/cli.js docs search . "Markdown" --status todo --limit 10
+olav-tasks docs search . "acceptance" --json
+olav-tasks docs search . "Markdown" --status todo --limit 10
 ```
 
 Search uses case-insensitive literal phrase matching and returns the first match per file with its source path and line numbers; results can be filtered by `status`, `category` or `doc_type` frontmatter. It reads files on demand and creates no index, database or log. By default at most five files are returned and combined output is capped at 6,000 characters (`--limit` 1–100, `--max-chars` 1,000–20,000; each excerpt is at most 600 characters). If anything is omitted the response says it is truncated; an empty truncated result does not prove there are no matches. The 8 MiB limit applies to local scanning, not model input. `docs-kb` does not convert PDF or Office documents, run OCR, classify documents or write content.
@@ -131,9 +146,9 @@ Six skills are bundled; an agent client discovers and loads them, with no skill 
 | `docs-kb` | Search project Markdown and locate passages by path and line before answering or writing |
 
 ```bash
-node dist/cli.js skills list
-node dist/cli.js skills install olav-tasks-plan --dir /path/to/agent/skills
-node dist/cli.js skills uninstall olav-tasks-plan --dir /path/to/agent/skills
+olav-tasks skills list
+olav-tasks skills install olav-tasks-plan --dir /path/to/agent/skills
+olav-tasks skills uninstall olav-tasks-plan --dir /path/to/agent/skills
 ```
 
 Installation needs an explicit directory and never touches global agent configuration. Reinstalling identical content is safe; the installer refuses to overwrite different content or a symlink, and uninstall only removes a directory that exactly matches the installed skill.
@@ -158,6 +173,24 @@ npm install @openai/codex-sdk                # Codex conversations
 ```
 
 Without it the board, CLI and skills work normally, and a conversation fails with a message that names the package to install. The Claude Agent SDK is Anthropic software under Anthropic's own terms (not MIT), which is another reason it is opt-in.
+
+## Develop from source
+
+Requirements: Node.js 22.12 or later, and npm.
+
+```bash
+npm ci
+npm run dev -- /path/to/project     # web app on http://127.0.0.1:4317, API on 4318
+```
+
+`OLAV_TASKS_WEB_PORT` and `OLAV_TASKS_API_PORT` change the development ports. To build and run the local app:
+
+```bash
+npm run typecheck && npm run build
+npm start -- /path/to/project --port 4318
+```
+
+The production server needs an explicit project directory (`--help` and `--version` work with `node dist/cli.js`). To listen on all IPv4 interfaces pass `--host 0.0.0.0`; the server checks the Host header, same-origin requests and project paths, but **has no login**, so use it only on a network you trust (see [LAN access](#lan-access-and-yolo)). `npm test` runs the unit tests and the agent check with fake agents (no network, no credentials).
 
 ## Project documents
 

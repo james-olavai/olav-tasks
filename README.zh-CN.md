@@ -2,13 +2,34 @@
 
 [English](README.md)
 
-**AI 管理项目，人通过对话来修改。** 项目就是一批 Markdown 文件；网页是只读的看板，右侧对话栏连接本机已登录的 Claude 或 Codex。没有数据库、托管服务和账号。
+**AI 当项目经理，你用对话来指挥。** 指向任意一个 Markdown 文件夹，就得到看板、文件浏览、连接本机已登录 Claude 或 Codex 的对话栏，以及一组让 Agent 能可靠管项目的 skills。没有数据库，不用托管服务，不用账号。
 
-- **Markdown 是唯一数据源**：任务是带 YAML frontmatter 的 Markdown，和文档放在同一目录。
-- **AI 操作看板**：通过 `tasks claim/new/validate/digest` 这几个原子、带校验的命令改状态，并向你汇报：先说需要你拍板的事，再说风险、进展和下一步。
-- **人只对话，随时可看**：网页不改任务；你在对话栏提需求，用 Activity 页（基于 git）查看 AI 到底改了什么。
+```bash
+npx olav-tasks /你的/项目目录      # 打开 http://127.0.0.1:4318
+```
 
-适用于任意项目目录（不限软件项目），以 npm 包形式安装。完整说明见[英文 README](README.md)。
+## 为什么用它
+
+- **轻量**：一个约 220 kB 的 npm 包、一个依赖，本机 Node.js 运行；不需要 Docker、数据库、搜索索引或云服务。项目可以是代码、写作、研究，任何放在文件里的工作。
+- **文件就是本体**：任务是带几行 frontmatter 的 Markdown，和文档放在一起；看板只是这些文件的视图，所以 git 历史、diff、编辑器和各种 Agent 照常工作。普通 Markdown 无需迁移；不想用了，文件还在你手里。
+- **AI 管项目，网页只读**：你在对话栏说“规划一下”“开始下一个任务”“什么被卡住了”；Agent 通过带校验的小命令认领、新建、校验任务，然后汇报：先说需要你拍板的事，再说风险、进展、下一步。Activity 页直接从 git 显示改了什么。
+- **无索引的快速检索**：`docs search` 按路径和行号定位 Markdown 片段，返回有上限的小段摘录，Agent 读几百字而不是整份文件。采用字面短语匹配：没有向量、没有嵌入、没有要构建或同步的索引。
+- **面向 Agent 的开发闭环**：配套 skills 把工作从想法推到完成：规划成带依赖的任务、挑选就绪项、实现、独立复核、返修、验收；任务只有留下证据才会变成 `done`。
+- **多 Agent 安全**：`claim` 是加锁、带版本检查的写入，两个 Agent 不会抢同一个任务；并发新建不会重号；`validate` 在坏依赖进入看板前就报出来。
+- **配合你的 Agent，而不是取代它**：可用对话栏，也可让 Claude Code、Codex 等任何 Agent 直接调用 CLI 并加载 skills。
+
+## 快速开始
+
+需要 Node.js 22.12 或更新版本。
+
+```bash
+npx olav-tasks /项目目录                                  # 看板与对话栏
+npx olav-tasks tasks ready /项目目录 --json               # Agent 现在能开始什么
+npx olav-tasks docs search /项目目录 "验收"               # 按路径和行号找片段
+npx olav-tasks skills install olav-tasks-plan --dir ~/.claude/skills   # 把 skills 装给你的 Agent
+```
+
+对话栏需要装其一 Agent SDK（可选，保持安装小）：`npm install @anthropic-ai/claude-agent-sdk` 或 `npm install @openai/codex-sdk`；其余功能不需要。完整说明见[英文 README](README.md)。
 
 ## 当前状态
 
