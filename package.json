@@ -1,9 +1,17 @@
 {
   "name": "olav-tasks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Markdown project board and file workspace",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/james-olavai/olav-tasks.git"
+  },
+  "homepage": "https://github.com/james-olavai/olav-tasks#readme",
+  "bugs": {
+    "url": "https://github.com/james-olavai/olav-tasks/issues"
+  },
   "engines": {
     "node": ">=22.12.0"
   },
